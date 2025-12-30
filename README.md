@@ -100,17 +100,19 @@
 Run Gauge in a container built with Chainguard Images:
 
 ```bash
-# Build the container
-docker build -t gauge:latest .
-
-# Authenticate to Chainguard registry (required for accessing Chainguard images)
+# Authenticate to Chainguard registry (required for build and runtime)
 chainctl auth login
 chainctl auth configure-docker
+
+# Build the container (requires authentication to cgr.dev/chainguard-private)
+docker build -t gauge:latest .
 
 # Run with your images CSV
 docker run --rm \
   -v $(pwd):/workspace \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v ~/.docker:/root/.docker:ro \
+  -v ~/.config/chainctl:/root/.config/chainctl:ro \
   gauge:latest \
   --input /workspace/images.csv \
   --output both \
@@ -120,7 +122,9 @@ docker run --rm \
 
 **Important requirements**:
 - **Docker socket mount** (`-v /var/run/docker.sock:/var/run/docker.sock`): Required for pulling and scanning images, and CHPS scoring
-- **Pre-authentication**: Run `chainctl auth login` and `chainctl auth configure-docker` on your host. This sets up Docker authentication via credential helper, which the container will use through the mounted Docker socket.
+- **Docker config mount** (`-v ~/.docker:/root/.docker:ro`): Required for registry authentication. The Docker CLI inside the container needs access to your credential configuration.
+- **Chainctl config mount** (`-v ~/.config/chainctl:/root/.config/chainctl:ro`): Required for the credential helper to authenticate with cgr.dev registries.
+- **Pre-authentication**: Run `chainctl auth login` and `chainctl auth configure-docker` on your host before building or running the container.
 
 ### Option 2: Local Installation
 
@@ -884,6 +888,21 @@ gauge --input large-fleet.csv \
 - Use different checkpoint file: `--checkpoint-file custom.json`
 - Checkpoint is JSON - safe to inspect/edit manually
 - Resume only works with same CSV file and image pairs
+
+**Container authentication errors (cgr.dev/chainguard-private)**
+- Ensure you've run `chainctl auth login` and `chainctl auth configure-docker` on the host
+- Mount both Docker config and chainctl config:
+  ```bash
+  docker run --rm \
+    -v $(pwd):/workspace \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v ~/.docker:/root/.docker:ro \
+    -v ~/.config/chainctl:/root/.config/chainctl:ro \
+    gauge:latest --input /workspace/images.csv
+  ```
+- Rebuild the container image if needed (it includes `chainctl` for the credential helper)
+- Verify host authentication works: `docker pull cgr.dev/chainguard-private/python:latest`
+- Check chainctl auth status: `chainctl auth status`
 
 ## Project Structure
 
