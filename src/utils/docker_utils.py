@@ -524,6 +524,10 @@ class DockerClient:
             "authentication failed",
             "not authorized",
             "authorization failed",
+            # GCR-specific error patterns
+            "permission denied",
+            "caller does not have permission",
+            "request had insufficient authentication scopes",
         ]
 
         return any(msg in stderr_lower for msg in auth_errors)

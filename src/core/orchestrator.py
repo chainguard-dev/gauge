@@ -18,7 +18,7 @@ from outputs.config import HTMLGeneratorConfig, XLSXGeneratorConfig
 from outputs.html_generator import HTMLGenerator
 from outputs.xlsx_generator import XLSXGenerator
 from utils.docker_utils import DockerClient
-from utils.logging_helpers import log_error_section
+from utils.logging_helpers import log_error_section, log_warning_section
 
 # Read version from src/__init__.py (single source of truth)
 try:
@@ -202,10 +202,42 @@ class GaugeOrchestrator:
             )
             sys.exit(1)
 
+        # Check if GCR auth is needed based on input images
+        if not getattr(self.args, 'no_gcr_auth', False):
+            self._ensure_gcr_auth_if_needed()
+
         if self.args.with_kevs:
             logger.info("KEV checking enabled, loading CISA KEV catalog...")
             self.kev_catalog = KEVCatalog()
             self.kev_catalog.load()
+
+    def _ensure_gcr_auth_if_needed(self):
+        """Configure GCR auth if any input images are from gcr.io."""
+        from utils.gcr_auth import GCRAuthenticator
+
+        # Collect all images from pairs
+        all_images = [p.alternative_image for p in self.pairs] + \
+                     [p.chainguard_image for p in self.pairs]
+
+        gcr_credentials = getattr(self.args, 'gcr_credentials', None)
+        gcr_auth = GCRAuthenticator(credentials_file=gcr_credentials)
+        gcr_images = [img for img in all_images if gcr_auth.is_gcr_registry(img)]
+
+        if gcr_images:
+            logger.info(f"Detected {len(gcr_images)} GCR images, configuring authentication...")
+            if gcr_auth.authenticate():
+                logger.info("GCR authentication configured successfully")
+            else:
+                log_warning_section(
+                    f"No GCR credentials found for {len(gcr_images)} gcr.io images.",
+                    [
+                        "Image pulls may fail. To configure GCR authentication:",
+                        "  1. --gcr-credentials /path/to/service-account.json",
+                        "  2. Set GOOGLE_APPLICATION_CREDENTIALS environment variable",
+                        "  3. Run: gcloud auth login && gcloud auth configure-docker",
+                    ],
+                    logger=logger,
+                )
 
     def _load_image_pairs(self) -> list[ImagePair]:
         """Load image pairs from CSV file with validation."""

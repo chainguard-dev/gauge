@@ -57,6 +57,7 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     cache_group = parser.add_argument_group("cache options")
     matching_group = parser.add_argument_group("matching options")
     features_group = parser.add_argument_group("optional features")
+    auth_group = parser.add_argument_group("authentication options")
 
     # Input/Output arguments
     io_group.add_argument("-i", "--input", type=Path, default=Path("images.csv"), help="Input CSV file.")
@@ -106,6 +107,10 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     features_group.add_argument("--include-negligible", action="store_true", help="Include Negligible/Unknown CVEs in counts (excluded by default).")
     features_group.add_argument("--chps-max-workers", type=int, default=DEFAULT_CHPS_MAX_WORKERS, help="Number of parallel CHPS scanning threads.")
 
+    # Authentication options
+    auth_group.add_argument("--gcr-credentials", type=Path, help="Path to Google Cloud service account JSON for gcr.io authentication.")
+    auth_group.add_argument("--no-gcr-auth", action="store_true", help="Disable automatic GCR authentication.")
+
     # Other options
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
 
@@ -149,8 +154,8 @@ def main_match():
     # Simplified parser for brevity
     parser.add_argument("-i", "--input", type=Path, required=True, help="Input file with images.")
     parser.add_argument("-o", "--output", type=Path, default=Path("output/matched-log.csv"), help="Output CSV file.")
-    parser.add_argument("--unmatched", type=Path, default=Path("output/unmatched.txt"), help="Output file for unmatched images.")
     parser.add_argument("--interactive", action="store_true", help="Enable interactive mode.")
+    parser.add_argument("--github-token", type=str, help="GitHub token for issue search.")
     parser.add_argument("--min-confidence", type=float, default=DEFAULT_MATCH_CONFIDENCE, help="Minimum match confidence.")
     parser.add_argument("--dfc-mappings-file", type=Path, help="Local DFC mappings file.")
     parser.add_argument("--cache-dir", type=Path, help="Cache directory.")
@@ -167,6 +172,7 @@ def main_match():
 
     args = parser.parse_args()
     setup_logging(args.verbose)
+    logger = logging.getLogger(__name__)
 
     # Basic validation
     if not args.input.exists():
@@ -178,7 +184,6 @@ def main_match():
         _, unmatched_images = match_images(
             input_file=args.input,
             output_file=args.output,
-            unmatched_file=args.unmatched,
             min_confidence=args.min_confidence,
             interactive=args.interactive,
             dfc_mappings_file=args.dfc_mappings_file,
@@ -191,9 +196,9 @@ def main_match():
             llm_confidence_threshold=args.llm_confidence_threshold,
             anthropic_api_key=args.anthropic_api_key,
             generate_dfc_pr=args.generate_dfc_pr,
+            github_token=args.github_token,
         )
-        if not unmatched_images and args.unmatched.exists():
-            args.unmatched.unlink()
+        if not unmatched_images:
             logger.info("All images matched successfully.")
     except Exception as e:
         logger.error(f"Match command failed: {e}", exc_info=True)

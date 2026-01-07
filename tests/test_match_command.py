@@ -241,18 +241,20 @@ images:
         ]
 
         # Run matching
-        matched, unmatched = match_images(
-            input_file=input_file,
-            output_file=output_file,
-            unmatched_file=unmatched_file,
-            min_confidence=0.7,
-        )
+        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
+            mock_gh_client.return_value.get_open_issues.return_value = []
+            with patch('commands.match.IssueMatcher'):
+                matched, unmatched = match_images(
+                    input_file=input_file,
+                    output_file=output_file,
+                    min_confidence=0.7,
+                    github_token="test-token",
+                )
 
         # Verify results
         assert len(matched) == 2
         assert len(unmatched) == 0
         assert output_file.exists()
-        assert not unmatched_file.exists()  # Should not be created when empty
 
     @patch('commands.match.ImageMatcher')
     def test_match_images_with_unmatched(self, mock_matcher_class, tmp_path):
@@ -262,7 +264,6 @@ images:
         input_file.write_text("nginx:latest\ncustom-app:v1.0\n")
 
         output_file = tmp_path / "matched.csv"
-        unmatched_file = tmp_path / "unmatched.txt"
 
         # Mock matcher
         mock_matcher = MagicMock()
@@ -283,19 +284,28 @@ images:
         ]
 
         # Run matching
-        matched, unmatched = match_images(
-            input_file=input_file,
-            output_file=output_file,
-            unmatched_file=unmatched_file,
-            min_confidence=0.7,
-        )
+        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
+            mock_gh_client.return_value.get_open_issues.return_value = []
+            with patch('commands.match.IssueMatcher') as mock_issue_matcher:
+                from utils.issue_matcher import IssueMatchResult
+                mock_issue_matcher.return_value.match.return_value = IssueMatchResult(
+                    image_name="custom-app:v1.0",
+                    matched_issue=None,
+                    confidence=0.0,
+                    reasoning="No match",
+                )
+                matched, unmatched = match_images(
+                    input_file=input_file,
+                    output_file=output_file,
+                    min_confidence=0.7,
+                    github_token="test-token",
+                )
 
         # Verify results
         assert len(matched) == 1
         assert len(unmatched) == 1
         assert unmatched[0] == "custom-app:v1.0"
         assert output_file.exists()
-        assert unmatched_file.exists()
 
     @patch('commands.match.ImageMatcher')
     def test_match_images_low_confidence(self, mock_matcher_class, tmp_path):
@@ -305,7 +315,6 @@ images:
         input_file.write_text("nginx:latest\n")
 
         output_file = tmp_path / "matched.csv"
-        unmatched_file = tmp_path / "unmatched.txt"
 
         # Mock matcher
         mock_matcher = MagicMock()
@@ -319,13 +328,23 @@ images:
         )
 
         # Run matching
-        matched, unmatched = match_images(
-            input_file=input_file,
-            output_file=output_file,
-            unmatched_file=unmatched_file,
-            min_confidence=0.7,
-            interactive=False,
-        )
+        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
+            mock_gh_client.return_value.get_open_issues.return_value = []
+            with patch('commands.match.IssueMatcher') as mock_issue_matcher:
+                from utils.issue_matcher import IssueMatchResult
+                mock_issue_matcher.return_value.match.return_value = IssueMatchResult(
+                    image_name="nginx:latest",
+                    matched_issue=None,
+                    confidence=0.0,
+                    reasoning="No match",
+                )
+                matched, unmatched = match_images(
+                    input_file=input_file,
+                    output_file=output_file,
+                    min_confidence=0.7,
+                    interactive=False,
+                    github_token="test-token",
+                )
 
         # Verify low confidence is treated as unmatched
         assert len(matched) == 0
@@ -340,7 +359,6 @@ images:
         input_file.write_text("nginx:latest\npython:3.12\n")
 
         output_file = tmp_path / "matched.csv"
-        unmatched_file = tmp_path / "unmatched.txt"
 
         # Mock matcher
         mock_matcher = MagicMock()
@@ -361,12 +379,22 @@ images:
         ]
 
         # Run matching with 0.7 threshold
-        matched, unmatched = match_images(
-            input_file=input_file,
-            output_file=output_file,
-            unmatched_file=unmatched_file,
-            min_confidence=0.7,
-        )
+        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
+            mock_gh_client.return_value.get_open_issues.return_value = []
+            with patch('commands.match.IssueMatcher') as mock_issue_matcher:
+                from utils.issue_matcher import IssueMatchResult
+                mock_issue_matcher.return_value.match.return_value = IssueMatchResult(
+                    image_name="python:3.12",
+                    matched_issue=None,
+                    confidence=0.0,
+                    reasoning="No match",
+                )
+                matched, unmatched = match_images(
+                    input_file=input_file,
+                    output_file=output_file,
+                    min_confidence=0.7,
+                    github_token="test-token",
+                )
 
         # Verify threshold filtering
         assert len(matched) == 1

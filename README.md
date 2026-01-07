@@ -562,6 +562,13 @@ See `sample-exec-summary.md` and `sample-appendix.md` for complete examples.
 |--------|---------|-------------|
 | `--with-all` | - | Enable all optional features (equivalent to `--with-chps --with-fips --with-kevs`) |
 
+### Authentication Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--gcr-credentials` | - | Path to Google Cloud service account JSON for gcr.io authentication |
+| `--no-gcr-auth` | - | Disable automatic GCR authentication |
+
 ### Pricing Configuration
 
 The pricing quote feature automatically generates subscription cost estimates based on the Chainguard images in your assessment. It classifies images by tier (base, application, fips, ai) and applies volume-based pricing with bulk discounts.
@@ -857,6 +864,43 @@ gauge --input large-fleet.csv \
 - Safe to interrupt with Ctrl+C - no lost work
 - Useful for scanning 50+ image pairs
 
+## Google Cloud Registry (gcr.io) Authentication
+
+When scanning images from Google Cloud Registry (`gcr.io`, `us.gcr.io`, `eu.gcr.io`, `asia.gcr.io`) or Artifact Registry (`*.pkg.dev`), Gauge will automatically attempt authentication using the following methods (in priority order):
+
+1. **CLI flag**: `--gcr-credentials /path/to/service-account.json`
+2. **Environment variable**: `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json`
+3. **gcloud ADC**: Uses existing `gcloud auth login` session
+
+### For CI/CD environments
+
+```bash
+# Using environment variable
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+gauge --input images.csv
+
+# Using CLI flag
+gauge --input images.csv --gcr-credentials /path/to/sa.json
+```
+
+### For local development
+
+```bash
+# Authenticate with gcloud
+gcloud auth login
+gcloud auth configure-docker gcr.io
+
+# Run gauge (no extra flags needed)
+gauge --input images.csv
+```
+
+### Disable GCR authentication
+
+```bash
+# Skip automatic GCR auth (useful if images are public)
+gauge --input images.csv --no-gcr-auth
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -903,6 +947,12 @@ gauge --input large-fleet.csv \
 - Rebuild the container image if needed (it includes `chainctl` for the credential helper)
 - Verify host authentication works: `docker pull cgr.dev/chainguard-private/python:latest`
 - Check chainctl auth status: `chainctl auth status`
+
+**GCR authentication errors (gcr.io/us.gcr.io/etc)**
+- Provide credentials via `--gcr-credentials` flag or `GOOGLE_APPLICATION_CREDENTIALS` env var
+- Ensure the service account has Storage Object Viewer (`roles/storage.objectViewer`) permission
+- For local development, run `gcloud auth login && gcloud auth configure-docker gcr.io`
+- Use `--no-gcr-auth` to disable automatic GCR authentication if images are public
 
 ## Project Structure
 

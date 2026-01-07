@@ -49,6 +49,9 @@ DEFAULT_UPSTREAM_CONFIDENCE = 0.7
 DEFAULT_LLM_CONFIDENCE = 0.7
 """Default minimum confidence for LLM fuzzy matching (0.0-1.0)."""
 
+DEFAULT_ISSUE_MATCH_CONFIDENCE = 0.7
+"""Default minimum confidence for GitHub issue matching (0.0-1.0)."""
+
 DFC_CONTRIBUTION_THRESHOLD = 0.85
 """Minimum confidence for DFC contribution eligibility (0.0-1.0)."""
 
@@ -89,6 +92,13 @@ CHAINGUARD_PRIVATE_REGISTRY = "cgr.dev/chainguard-private"
 CHAINGUARD_PUBLIC_REGISTRY = "cgr.dev/chainguard"
 """Chainguard public registry prefix."""
 
+# Google Cloud Registry patterns
+GCR_REGISTRIES = ["gcr.io", "us.gcr.io", "eu.gcr.io", "asia.gcr.io"]
+"""Google Container Registry hostnames."""
+
+ARTIFACT_REGISTRY_SUFFIX = "pkg.dev"
+"""Google Artifact Registry domain suffix."""
+
 # ============================================================================
 # Timeouts (in seconds)
 # ============================================================================
@@ -119,6 +129,12 @@ DOCKER_QUICK_CHECK_TIMEOUT = 5
 
 GITHUB_CLI_TIMEOUT = 10
 """Timeout for GitHub CLI operations (10 seconds)."""
+
+GITHUB_ISSUE_SEARCH_TIMEOUT = 30
+"""Timeout for GitHub issue search API requests (30 seconds)."""
+
+GCR_AUTH_TIMEOUT = 30
+"""Timeout for Google Cloud Registry authentication operations (30 seconds)."""
 
 CLI_SUBPROCESS_TIMEOUT = 60
 """Timeout for general CLI subprocess operations (1 minute)."""

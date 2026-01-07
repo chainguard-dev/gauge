@@ -108,6 +108,7 @@ gauge/
 │   │   ├── docker_utils.py         # Docker/Podman abstraction
 │   │   ├── fips_calculator.py      # FIPS cost calculations
 │   │   ├── formatting.py           # Number, date, currency formatting
+│   │   ├── gcr_auth.py             # Google Cloud Registry authentication
 │   │   ├── image_classifier.py     # Image tier classification
 │   │   ├── image_verification.py   # Centralized Chainguard image verification
 │   │   ├── logging_helpers.py      # Consistent logging utilities
@@ -291,6 +292,12 @@ gauge/
 - Image pulling and inspection with timeout handling
 - Platform handling
 - Recoverable error detection for retry queue
+
+**`gcr_auth.py`** - Google Cloud Registry authentication
+- Service account JSON credential support
+- gcloud Application Default Credentials (ADC) fallback
+- Docker credential configuration
+- Registry pattern detection (gcr.io, pkg.dev)
 
 **`image_verification.py`** - Chainguard image verification
 - Centralized verification service

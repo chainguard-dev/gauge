@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from constants import CLI_SUBPROCESS_TIMEOUT, VERSION_CHECK_TIMEOUT
+from constants import CLI_SUBPROCESS_TIMEOUT, VERSION_CHECK_TIMEOUT, GCR_REGISTRIES, ARTIFACT_REGISTRY_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,45 @@ class TokenManager:
             logger.warning(f"Token refresh failed: {e}")
             return False
 
+    def refresh_gcr_token(self) -> bool:
+        """
+        Refresh Google Cloud Registry token.
+
+        Returns:
+            True if refresh succeeded
+        """
+        try:
+            from utils.gcr_auth import GCRAuthenticator
+
+            logger.info("Refreshing Google Cloud Registry authentication token...")
+            gcr_auth = GCRAuthenticator()
+
+            if gcr_auth.authenticate():
+                # Record refresh for all GCR registries
+                for registry in GCR_REGISTRIES:
+                    self.last_refresh_time[registry] = time.time()
+                self.last_refresh_time[ARTIFACT_REGISTRY_SUFFIX] = time.time()
+                logger.info("GCR token refreshed successfully")
+                return True
+            else:
+                logger.warning("Failed to refresh GCR authentication")
+                return False
+
+        except Exception as e:
+            logger.warning(f"GCR token refresh failed: {e}")
+            return False
+
+    def _is_gcr_registry(self, registry: str) -> bool:
+        """Check if registry is a GCR or Artifact Registry."""
+        if not registry:
+            return False
+        for gcr_registry in GCR_REGISTRIES:
+            if gcr_registry in registry:
+                return True
+        if ARTIFACT_REGISTRY_SUFFIX in registry:
+            return True
+        return False
+
     def refresh_if_needed(self, registry: str) -> bool:
         """
         Refresh token if needed for the given registry.
@@ -146,6 +185,8 @@ class TokenManager:
 
         if isinstance(registry, str) and "cgr.dev" in registry:
             return self.refresh_chainguard_token()
+        elif self._is_gcr_registry(registry):
+            return self.refresh_gcr_token()
         else:
             # For other registries, we don't have automatic refresh
             logger.debug(f"No automatic token refresh available for {registry}")

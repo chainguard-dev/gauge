@@ -232,6 +232,78 @@ class TestUpstreamImageFinder:
         assert finder._extract_base_name("python") == "python"
         assert finder._extract_base_name("app:tag@sha256:abc123") == "app"
 
+    def test_extract_full_path(self, tmp_path):
+        """Test full path extraction utility (preserves org/image structure)."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+        )
+
+        # Should preserve org/image structure
+        assert finder._extract_full_path("kaniko-project/executor:v1.0") == "kaniko-project/executor"
+        assert finder._extract_full_path("kaniko-project/executor") == "kaniko-project/executor"
+
+        # Should strip registry prefix
+        assert finder._extract_full_path("gcr.io/kaniko-project/executor") == "kaniko-project/executor"
+        assert finder._extract_full_path("docker.io/library/nginx:latest") == "nginx"
+        assert finder._extract_full_path("quay.io/prometheus/prometheus:v2.45.0") == "prometheus/prometheus"
+
+        # Simple images (no org)
+        assert finder._extract_full_path("nginx:latest") == "nginx"
+        assert finder._extract_full_path("python") == "python"
+
+        # With digest
+        assert finder._extract_full_path("org/image@sha256:abc123") == "org/image"
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_common_registry_gcr_full_path(self, mock_exists, tmp_path):
+        """Test gcr.io registry with full path preserved (kaniko-project/executor case)."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+
+        # Mock: First 4 registries (docker.io/library, docker.io, quay.io, ghcr.io) fail
+        # gcr.io/kaniko-project/executor succeeds
+        def mock_verify(image: str) -> bool:
+            return image == "gcr.io/kaniko-project/executor"
+
+        mock_exists.side_effect = mock_verify
+
+        result = finder.find_upstream("kaniko-project/executor")
+
+        assert result.upstream_image == "gcr.io/kaniko-project/executor"
+        assert result.confidence == 0.80
+        assert result.method == "common_registry"
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_common_registry_tries_full_path_first(self, mock_exists, tmp_path):
+        """Test that full path is tried before base name in common registries."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+
+        call_order = []
+
+        def track_calls(image: str) -> bool:
+            call_order.append(image)
+            # Only succeed for the gcr.io full path version
+            return image == "gcr.io/myorg/myimage"
+
+        mock_exists.side_effect = track_calls
+
+        result = finder.find_upstream("myorg/myimage")
+
+        # Should find it at gcr.io with full path
+        assert result.upstream_image == "gcr.io/myorg/myimage"
+        assert result.confidence == 0.80
+
+        # Verify full path is tried before base name for each registry
+        # docker.io/library should try full path first
+        assert "docker.io/library/myorg/myimage" in call_order
+        # docker.io should try full path
+        assert "docker.io/myorg/myimage" in call_order
+
     def test_manual_mappings_loading_missing_file(self, tmp_path):
         """Test manual mappings loading when file doesn't exist."""
         finder = UpstreamImageFinder(

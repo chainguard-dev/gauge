@@ -49,6 +49,7 @@ class UpstreamImageFinder:
         "docker.io",
         "quay.io",
         "ghcr.io",
+        "gcr.io",
     ]
 
     # Known private registry patterns
@@ -246,7 +247,8 @@ class UpstreamImageFinder:
         """
         Try finding image in common public registries.
 
-        Checks docker.io, quay.io, ghcr.io in order.
+        Checks docker.io, quay.io, ghcr.io, gcr.io in order.
+        For each registry, tries the full path first (org/image), then base name only.
 
         Args:
             image: Image reference
@@ -257,10 +259,25 @@ class UpstreamImageFinder:
         # Extract base name without registry/tag
         base_name = self._extract_base_name(image)
 
+        # Extract full path (preserving org/image structure) without registry/tag
+        full_path = self._extract_full_path(image)
+
         # Try each common registry
         for registry in self.COMMON_REGISTRIES:
-            candidate = f"{registry}/{base_name}"
+            # First try with full path preserved (e.g., gcr.io/kaniko-project/executor)
+            # This handles cases like kaniko-project/executor → gcr.io/kaniko-project/executor
+            if full_path and full_path != base_name:
+                candidate = f"{registry}/{full_path}"
+                if self._verify_upstream_exists(candidate):
+                    logger.debug(f"Found in common registry (full path): {candidate}")
+                    return UpstreamResult(
+                        upstream_image=candidate,
+                        confidence=0.80,
+                        method="common_registry"
+                    )
 
+            # Then try with just the base name (e.g., docker.io/nginx)
+            candidate = f"{registry}/{base_name}"
             if self._verify_upstream_exists(candidate):
                 logger.debug(f"Found in common registry: {candidate}")
                 return UpstreamResult(
@@ -270,6 +287,44 @@ class UpstreamImageFinder:
                 )
 
         return None
+
+    def _extract_full_path(self, image: str) -> str:
+        """
+        Extract full image path preserving org/image structure but removing registry.
+
+        Examples:
+            kaniko-project/executor:v1.0 → kaniko-project/executor
+            gcr.io/kaniko-project/executor → kaniko-project/executor
+            nginx:latest → nginx
+            docker.io/library/nginx → nginx
+
+        Args:
+            image: Image reference
+
+        Returns:
+            Full image path without registry or tag
+        """
+        # Remove tag
+        if ":" in image:
+            image = image.split(":")[0]
+
+        # Remove digest
+        if "@" in image:
+            image = image.split("@")[0]
+
+        # Check if image has a registry prefix (contains dots in first segment)
+        parts = image.split("/")
+        if len(parts) > 1:
+            first_part = parts[0]
+            # If first part looks like a registry (has dots or is localhost), strip it
+            if "." in first_part or first_part == "localhost" or ":" in first_part:
+                parts = parts[1:]
+
+            # Handle docker.io/library/ prefix
+            if parts and parts[0] == "library":
+                parts = parts[1:]
+
+        return "/".join(parts).lower()
 
     def _try_base_extraction(self, image: str) -> Optional[UpstreamResult]:
         """

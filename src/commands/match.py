@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from integrations.github_issue_search import GitHubIssueSearchClient
 from utils.image_matcher import ImageMatcher, MatchResult
+from utils.issue_matcher import IssueMatcher, IssueMatchResult
 from utils.upstream_finder import UpstreamImageFinder
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,6 @@ logger = logging.getLogger(__name__)
 def match_images(
     input_file: Path,
     output_file: Path,
-    unmatched_file: Path,
     min_confidence: float = 0.7,
     interactive: bool = False,
     dfc_mappings_file: Optional[Path] = None,
@@ -33,14 +34,14 @@ def match_images(
     llm_confidence_threshold: float = 0.7,
     anthropic_api_key: Optional[str] = None,
     generate_dfc_pr: bool = False,
-) -> tuple[list[tuple[str, str]], list[str]]:
+    github_token: Optional[str] = None,
+) -> tuple[list[tuple[str, MatchResult]], list[str]]:
     """
     Match alternative images to Chainguard equivalents.
 
     Args:
         input_file: Input file with alternative images (one per line or CSV)
         output_file: Output CSV file with matched pairs
-        unmatched_file: Output file for unmatched images
         min_confidence: Minimum confidence threshold (0.0 - 1.0)
         interactive: Enable interactive mode for low-confidence matches
         dfc_mappings_file: Optional local DFC mappings file
@@ -53,6 +54,7 @@ def match_images(
         llm_confidence_threshold: Minimum confidence for LLM matches (0.0 - 1.0)
         anthropic_api_key: Anthropic API key for LLM matching
         generate_dfc_pr: Generate DFC contribution files for high-confidence LLM matches
+        github_token: GitHub token for issue search (required for issue matching)
 
     Returns:
         Tuple of (matched_pairs with MatchResult, unmatched_images)
@@ -64,8 +66,6 @@ def match_images(
 
     # Ensure output directory exists
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    if unmatched_file.parent != Path("."):
-        unmatched_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Initialize upstream finder if enabled
     upstream_finder = None
@@ -106,6 +106,25 @@ def match_images(
         # Put DFC contributions in the same directory as matched-log.csv
         dfc_contributor = DFCContributor(output_dir=output_file.parent)
         logger.info("DFC contribution generation enabled")
+
+    # Initialize GitHub issue search (requires authentication)
+    github_client = None
+    issue_matcher = None
+    open_issues: list = []
+    try:
+        logger.info("Initializing GitHub issue search...")
+        github_client = GitHubIssueSearchClient(github_token=github_token)
+        issue_matcher = IssueMatcher(
+            api_key=anthropic_api_key,
+            model=llm_model,
+            cache_dir=cache_dir,
+            confidence_threshold=llm_confidence_threshold,
+        )
+        open_issues = github_client.get_open_issues()
+        logger.info(f"Loaded {len(open_issues)} open issues from image-requests")
+    except ValueError as e:
+        logger.error(f"GitHub authentication required for issue search: {e}")
+        sys.exit(1)
 
     # Match images
     matched_pairs: list[tuple[str, MatchResult]] = []
@@ -181,9 +200,37 @@ def match_images(
     logger.info(f"Writing intake file for gauge scan to {intake_file}")
     write_matched_intake(intake_file, matched_pairs)
 
-    if unmatched_images:
-        logger.warning(f"Writing {len(unmatched_images)} unmatched images to {unmatched_file}")
-        write_unmatched_file(unmatched_file, unmatched_images)
+    # Search GitHub issues for unmatched images
+    issue_matches: list[tuple[str, IssueMatchResult]] = []
+    no_issue_matches: list[str] = []
+
+    if unmatched_images and issue_matcher:
+        logger.info(f"\nSearching GitHub issues for {len(unmatched_images)} unmatched images...")
+
+        for image in unmatched_images:
+            result = issue_matcher.match(image, open_issues)
+            if result.matched_issue:
+                issue_matches.append((image, result))
+            else:
+                no_issue_matches.append(image)
+
+        # Output table of successful issue matches
+        if issue_matches:
+            logger.info("\n" + "=" * 80)
+            logger.info("Existing GitHub Issues Found for Unmatched Images:")
+            logger.info("=" * 80)
+            for image, result in issue_matches:
+                logger.info(f"  {image}")
+                logger.info(f"    Issue: {result.matched_issue.title}")
+                logger.info(f"    URL: {result.matched_issue.url}")
+                logger.info(f"    Confidence: {result.confidence:.0%}")
+            logger.info("=" * 80)
+
+        # Output list of images with no matching issues
+        if no_issue_matches:
+            logger.info(f"\nNo matching issues found for {len(no_issue_matches)} images:")
+            for image in no_issue_matches:
+                logger.info(f"  - {image}")
 
     # Generate DFC contribution files if requested
     if dfc_contributor and dfc_contributor.suggestions:
