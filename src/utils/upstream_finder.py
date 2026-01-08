@@ -17,6 +17,19 @@ from utils.docker_utils import image_exists_in_registry
 
 logger = logging.getLogger(__name__)
 
+# Functional suffixes that indicate derivative tools, not the base image itself.
+# When an image name follows the pattern <base>-<suffix>, we skip matching to <base>.
+# For example: "node-exporter" should NOT match "node" (Node.js).
+TOOL_SUFFIXES = {
+    "exporter",    # Prometheus exporters (node-exporter, redis-exporter)
+    "operator",    # Kubernetes operators
+    "controller",  # Controllers
+    "agent",       # Agents
+    "proxy",       # Proxies
+    "gateway",     # Gateways
+    "client",      # Client libraries
+}
+
 
 @dataclass
 class UpstreamResult:
@@ -80,11 +93,18 @@ class UpstreamImageFinder:
         # Load manual mappings if available
         self._load_manual_mappings()
 
+    # Iron Bank registry - DoD hardened container images
+    IRON_BANK_REGISTRY = "registry1.dso.mil"
+
+    # Class-level cache for Iron Bank access status (shared across instances)
+    _iron_bank_accessible: bool | None = None  # None = not tested, True/False = tested
+
     def find_upstream(self, alternative_image: str) -> UpstreamResult:
         """
         Find public upstream equivalent for alternative image.
 
         Tries strategies in order of confidence:
+        0. Iron Bank check (registry1.dso.mil) - try direct access first
         1. Manual mappings
         2. Registry strip
         3. Common registries
@@ -96,6 +116,14 @@ class UpstreamImageFinder:
         Returns:
             UpstreamResult with discovered image and metadata
         """
+        # Strategy 0: Iron Bank (registry1.dso.mil) - try direct access first
+        # Iron Bank images are hardened versions, so use them directly if accessible
+        if alternative_image.startswith(f"{self.IRON_BANK_REGISTRY}/"):
+            iron_bank_result = self._try_iron_bank_access(alternative_image)
+            if iron_bank_result:
+                return iron_bank_result
+            # If Iron Bank access failed, continue with normal upstream discovery
+
         # Strategy 1: Check manual mappings (100% confidence)
         if alternative_image in self.manual_mappings:
             upstream = self.manual_mappings[alternative_image]
@@ -128,6 +156,60 @@ class UpstreamImageFinder:
             confidence=0.0,
             method="none"
         )
+
+    def _try_iron_bank_access(self, image: str) -> Optional[UpstreamResult]:
+        """
+        Try to access Iron Bank (registry1.dso.mil) image directly.
+
+        Iron Bank images are DoD-hardened container images. If the user has access,
+        we should use them directly rather than finding a public alternative.
+
+        Access status is cached after the first attempt:
+        - If we succeed once, all subsequent Iron Bank images skip verification
+        - If we fail once, all subsequent Iron Bank images fall through to upstream discovery
+
+        Args:
+            image: Iron Bank image reference (registry1.dso.mil/...)
+
+        Returns:
+            UpstreamResult if accessible, None if access failed
+        """
+        # Check cached access status
+        if UpstreamImageFinder._iron_bank_accessible is True:
+            # Previously confirmed access - skip verification, return directly
+            logger.debug(f"Iron Bank access confirmed (cached): {image}")
+            return UpstreamResult(
+                upstream_image=image,
+                confidence=1.0,
+                method="iron_bank_direct"
+            )
+
+        if UpstreamImageFinder._iron_bank_accessible is False:
+            # Previously failed - skip and fall through to upstream discovery
+            logger.debug(f"Skipping Iron Bank access check (previously failed): {image}")
+            return None
+
+        # First Iron Bank image - verify access and cache result
+        logger.debug(f"Checking Iron Bank access for {image}")
+
+        if self._verify_upstream_exists(image):
+            logger.debug(f"Iron Bank image accessible: {image}")
+            # Cache successful access
+            UpstreamImageFinder._iron_bank_accessible = True
+            return UpstreamResult(
+                upstream_image=image,
+                confidence=1.0,
+                method="iron_bank_direct"
+            )
+
+        # Access failed - cache the failure and log warning with login suggestion
+        UpstreamImageFinder._iron_bank_accessible = False
+        logger.warning(
+            f"Cannot access Iron Bank registry ({self.IRON_BANK_REGISTRY})\n"
+            f"  If you have an Iron Bank account, run: docker login {self.IRON_BANK_REGISTRY}\n"
+            f"  Will use public upstream alternatives for Iron Bank images."
+        )
+        return None
 
     def _load_manual_mappings(self) -> None:
         """Load manual upstream mappings from YAML file."""
@@ -353,6 +435,15 @@ class UpstreamImageFinder:
         base_name = self._extract_base_name(image).lower()
 
         for base in common_bases:
+            # Skip if name follows pattern: <base>-<tool-suffix>
+            # e.g., "node-exporter" starts with "node-" and ends with tool suffix
+            # This prevents matching derivative tools to their base images
+            if base_name.startswith(f"{base}-"):
+                suffix = base_name[len(base) + 1:]  # Get part after "base-"
+                # Check if suffix matches or starts with any known tool suffix
+                if any(suffix == tool or suffix.startswith(f"{tool}-") for tool in TOOL_SUFFIXES):
+                    continue  # Skip - this is a tool FOR base, not base itself
+
             if base in base_name:
                 # Try with latest tag
                 candidate = f"docker.io/library/{base}:latest"

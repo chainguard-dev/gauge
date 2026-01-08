@@ -367,6 +367,187 @@ class TestUpstreamImageFinder:
         assert result.confidence == 0.0
         assert result.method == "none"
 
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_node_exporter_not_matched_to_node(self, mock_exists, tmp_path):
+        """Test that node-exporter does NOT match to Node.js 'node' image (issue #14)."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        mock_exists.return_value = False
+
+        result = finder.find_upstream("prometheus/node-exporter:v1.10.2")
+
+        # Should NOT extract "node" - exporter suffix indicates derivative tool
+        assert result.upstream_image is None or result.upstream_image != "node:latest"
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_redis_exporter_not_matched_to_redis(self, mock_exists, tmp_path):
+        """Test that redis-exporter does NOT match to base 'redis' image (issue #14)."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        mock_exists.return_value = False
+
+        result = finder.find_upstream("bitnami/analytics/redis-exporter:v1.80.1")
+
+        # Should NOT extract "redis" - exporter suffix indicates derivative tool
+        assert result.upstream_image is None or result.upstream_image != "redis:latest"
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_kafka_operator_not_matched_to_kafka(self, mock_exists, tmp_path):
+        """Test that kafka-operator does NOT match to base 'kafka' image."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        mock_exists.return_value = False
+
+        result = finder.find_upstream("strimzi/kafka-operator:latest")
+
+        # Should NOT extract "kafka" - operator suffix indicates derivative tool
+        assert result.upstream_image is None or result.upstream_image != "kafka:latest"
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_iron_bank_accessible_returns_direct(self, mock_exists, tmp_path):
+        """Test that accessible Iron Bank images are returned directly."""
+        # Reset class-level cache before test
+        UpstreamImageFinder._iron_bank_accessible = None
+
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        mock_exists.return_value = True
+
+        result = finder.find_upstream("registry1.dso.mil/ironbank/python:3.12")
+
+        # Should return the Iron Bank image directly with high confidence
+        assert result.upstream_image == "registry1.dso.mil/ironbank/python:3.12"
+        assert result.confidence == 1.0
+        assert result.method == "iron_bank_direct"
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_iron_bank_inaccessible_falls_back_to_upstream(self, mock_exists, tmp_path, caplog):
+        """Test that inaccessible Iron Bank images fall back to upstream discovery."""
+        import logging
+        caplog.set_level(logging.WARNING)
+        # Reset class-level cache before test
+        UpstreamImageFinder._iron_bank_accessible = None
+
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        # Iron Bank access fails, but docker.io verification succeeds
+        mock_exists.side_effect = lambda img: not img.startswith("registry1.dso.mil")
+
+        result = finder.find_upstream("registry1.dso.mil/ironbank/python:3.12")
+
+        # Should fall back to upstream discovery and log a warning
+        assert result.upstream_image is not None
+        assert result.upstream_image != "registry1.dso.mil/ironbank/python:3.12"
+        assert "Cannot access Iron Bank registry" in caplog.text
+        assert "docker login registry1.dso.mil" in caplog.text
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_iron_bank_inaccessible_logs_warning(self, mock_exists, tmp_path, caplog):
+        """Test that inaccessible Iron Bank images log appropriate warning."""
+        import logging
+        caplog.set_level(logging.WARNING)
+        # Reset class-level cache before test
+        UpstreamImageFinder._iron_bank_accessible = None
+
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        # All access fails
+        mock_exists.return_value = False
+
+        result = finder.find_upstream("registry1.dso.mil/ironbank/nginx:1.25")
+
+        # Should log warning with login suggestion
+        assert "Cannot access Iron Bank registry" in caplog.text
+        assert "docker login registry1.dso.mil" in caplog.text
+        assert "Will use public upstream alternatives" in caplog.text
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_iron_bank_failure_cached_skips_subsequent_attempts(self, mock_exists, tmp_path, caplog):
+        """Test that Iron Bank failure is cached and subsequent images skip access attempts."""
+        import logging
+        caplog.set_level(logging.DEBUG)
+        # Reset class-level cache before test
+        UpstreamImageFinder._iron_bank_accessible = None
+
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        # All Iron Bank access fails
+        mock_exists.side_effect = lambda img: not img.startswith("registry1.dso.mil")
+
+        # First Iron Bank image - should attempt access and fail
+        result1 = finder.find_upstream("registry1.dso.mil/ironbank/python:3.12")
+        assert UpstreamImageFinder._iron_bank_accessible is False
+        assert "Checking Iron Bank access for" in caplog.text
+
+        caplog.clear()
+
+        # Second Iron Bank image - should skip access attempt due to cached failure
+        result2 = finder.find_upstream("registry1.dso.mil/ironbank/nginx:1.25")
+        assert "Skipping Iron Bank access check (previously failed)" in caplog.text
+        # Should NOT attempt to check access again
+        assert "Checking Iron Bank access for registry1.dso.mil/ironbank/nginx" not in caplog.text
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_iron_bank_success_cached_skips_subsequent_verification(self, mock_exists, tmp_path, caplog):
+        """Test that Iron Bank success is cached and subsequent images skip verification."""
+        import logging
+        caplog.set_level(logging.DEBUG)
+        # Reset class-level cache before test
+        UpstreamImageFinder._iron_bank_accessible = None
+
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        mock_exists.return_value = True
+
+        # First Iron Bank image - should verify access
+        result1 = finder.find_upstream("registry1.dso.mil/ironbank/python:3.12")
+        assert result1.upstream_image == "registry1.dso.mil/ironbank/python:3.12"
+        assert result1.method == "iron_bank_direct"
+        assert UpstreamImageFinder._iron_bank_accessible is True
+        assert "Checking Iron Bank access for" in caplog.text
+        # Verification was called once
+        assert mock_exists.call_count == 1
+
+        caplog.clear()
+
+        # Second Iron Bank image - should use cached access, skip verification
+        result2 = finder.find_upstream("registry1.dso.mil/ironbank/nginx:1.25")
+        assert result2.upstream_image == "registry1.dso.mil/ironbank/nginx:1.25"
+        assert result2.method == "iron_bank_direct"
+        assert "Iron Bank access confirmed (cached)" in caplog.text
+        # Verification should NOT be called again
+        assert mock_exists.call_count == 1  # Still just 1 call from first image
+
+    @patch('utils.upstream_finder.image_exists_in_registry')
+    def test_postgres_controller_not_matched_to_postgres(self, mock_exists, tmp_path):
+        """Test that postgres-controller does NOT match to base 'postgres' image."""
+        finder = UpstreamImageFinder(
+            manual_mappings_file=tmp_path / "nonexistent.yaml",
+            min_confidence=0.7,
+        )
+        mock_exists.return_value = False
+
+        result = finder.find_upstream("zalando/postgres-controller:latest")
+
+        # Should NOT extract "postgres" - controller suffix indicates derivative tool
+        assert result.upstream_image is None or result.upstream_image != "postgres:latest"
+
 
 class TestUpstreamFinderIntegration:
     """Integration tests for upstream finder with ImageMatcher."""
