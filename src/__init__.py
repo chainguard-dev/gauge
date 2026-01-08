@@ -5,7 +5,7 @@ Gauge your container security posture with comprehensive vulnerability reports
 comparing container images with Chainguard alternatives.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __author__ = "Chainguard"
 
 from core.models import (
