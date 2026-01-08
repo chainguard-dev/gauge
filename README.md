@@ -344,11 +344,14 @@ gauge match --input images.txt -o matched.csv --interactive
 
 # Use offline DFC mappings
 gauge match --input images.txt -o matched.csv --dfc-mappings-file local-mappings.yaml
+
+# With GitHub token for searching existing image requests
+gauge match --input images.txt -o matched.csv --github-token $GITHUB_TOKEN
 ```
 
 The `match` command outputs:
 - `matched.csv` - Successfully matched image pairs with full metadata (ready for scanning)
-- `unmatched.txt` - Images that couldn't be matched (only if there are unmatched images)
+- `unmatched.txt` - Images that couldn't be matched, with GitHub issue search results showing any existing requests in chainguard-dev/image-requests
 
 ### Upstream Image Discovery (For Private/Internal Images)
 
@@ -425,6 +428,9 @@ gauge match --input images.txt -o matched.csv --llm-confidence-threshold 0.8
 
 # Generate DFC contribution files for high-confidence matches
 gauge match --input images.txt -o matched.csv --generate-dfc-pr
+
+# Disable auto-populating manual mappings file with new matches
+gauge match --input images.txt -o matched.csv --disable-mapping-auto-population
 ```
 
 **Configuration:**
@@ -491,7 +497,7 @@ See `gauge match --help` for all options.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-c, --customer` | "Customer" | Customer name for report branding |
-| `--max-workers` | 4 | Number of parallel scanning threads |
+| `--max-workers` | 2 | Number of parallel scanning threads |
 | `--platform` | `linux/amd64` | Platform for image pulls and scans (ensures consistency across all environments including ARM64 Macs) |
 | `--include-negligible` | - | Include Negligible/Unknown severity CVEs in total counts and reports (excluded by default) |
 | `-v, --verbose` | - | Enable verbose logging |
@@ -549,6 +555,7 @@ See `sample-exec-summary.md` and `sample-appendix.md` for complete examples.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--with-chps` | - | Include CHPS (Container Hardening and Provenance Scanner) scoring |
+| `--chps-max-workers` | 2 | Number of parallel CHPS scanning threads |
 
 ### KEV Integration
 
@@ -959,7 +966,7 @@ gauge --input images.csv --no-gcr-auth
 ```
 gauge/
 ├── src/                    # Source code (core, integrations, outputs, utils)
-├── tests/                  # Unit and integration tests (188 tests)
+├── tests/                  # Unit and integration tests (419 tests)
 ├── config/                 # Configuration files
 ├── resources/              # Static assets (logos, images)
 ├── example-images.csv      # Sample input file

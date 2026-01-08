@@ -782,7 +782,8 @@ class DockerClient:
             logger.debug(f"Fallback to {new_image} with skopeo failed: {stderr}")
 
         # All strategies failed - classify the error type from last attempt
-        logger.error(f"All fallback strategies failed for {original_image}")
+        # Use WARNING since retry queue may still succeed later
+        logger.warning(f"All fallback strategies failed for {original_image} (will retry)")
         error_type = self.classify_error_type(last_stderr)
         return original_image, False, False, error_type
 

@@ -141,7 +141,6 @@ class VulnerabilityScanner:
                 )
             if not pull_successful:
                 error_msg = f"Failed to pull image {original_image} and all fallback strategies failed"
-                logger.error(f"Failed to pull image {original_image} - cannot scan")
 
                 # Add to retry queue for later retry attempt
                 if context:
@@ -153,6 +152,11 @@ class VulnerabilityScanner:
                         context=context,
                         pair_index=pair_index
                     )
+                    # Use WARNING since retry queue will attempt again
+                    logger.warning(f"Failed to pull image {original_image} - queued for retry")
+                else:
+                    # No retry possible, log as ERROR
+                    logger.error(f"Failed to pull image {original_image} - cannot scan")
 
                 raise RuntimeError(error_msg)
 
@@ -636,6 +640,8 @@ class VulnerabilityScanner:
 
             if pull_successful:
                 retry_successes.append(failed_pull)
+                # Remove from queue so it doesn't appear in failure summary
+                self.retry_queue.remove(failed_pull)
                 logger.info(f"✓ Retry successful for {failed_pull.image}")
 
                 # If pull succeeded, try to scan the image

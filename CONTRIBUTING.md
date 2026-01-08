@@ -90,6 +90,8 @@ gauge/
 │   │   └── scanner_interface.py    # Scanner plugin interface
 │   ├── integrations/                # External service integrations
 │   │   ├── chainguard_api.py       # Chainguard API client
+│   │   ├── dfc_mappings.py         # DFC mappings fetcher from GitHub
+│   │   ├── github_issue_search.py  # GitHub API for image request issues
 │   │   ├── github_metadata.py      # GitHub image metadata for pricing tiers
 │   │   ├── grype_provider.py       # Grype scanner implementation
 │   │   └── kev_catalog.py          # CISA KEV catalog (O(1) lookups)
@@ -105,24 +107,32 @@ gauge/
 │   ├── utils/                       # Utility modules
 │   │   ├── chps_utils.py           # Container hardening integration
 │   │   ├── cve_ratios.py           # CVE growth rate calculations
+│   │   ├── dfc_contributor.py      # DFC contribution file generation
 │   │   ├── docker_utils.py         # Docker/Podman abstraction
 │   │   ├── fips_calculator.py      # FIPS cost calculations
 │   │   ├── formatting.py           # Number, date, currency formatting
 │   │   ├── gcr_auth.py             # Google Cloud Registry authentication
 │   │   ├── image_classifier.py     # Image tier classification
+│   │   ├── image_matcher.py        # Multi-tier image matching orchestration
+│   │   ├── image_utils.py          # Image name parsing utilities
 │   │   ├── image_verification.py   # Centralized Chainguard image verification
+│   │   ├── issue_matcher.py        # LLM-powered GitHub issue matching
+│   │   ├── llm_matcher.py          # Claude LLM integration for Tier 4
 │   │   ├── logging_helpers.py      # Consistent logging utilities
+│   │   ├── manual_mapping_populator.py  # Auto-populate manual mappings
 │   │   ├── markdown_utils.py       # Markdown loading and conversion
 │   │   ├── metrics_calculator.py   # CVE reduction metrics
 │   │   ├── pricing_calculator.py   # Pricing quote calculations
 │   │   ├── roi_calculator.py       # ROI and cost projections
+│   │   ├── token_manager.py        # Docker registry token management
+│   │   ├── upstream_finder.py      # Multi-strategy upstream discovery
 │   │   ├── validation.py           # Input validation
 │   │   └── vulnerability_utils.py  # Vulnerability aggregation
 │   ├── cli.py                       # Command-line interface entry point
 │   └── constants.py                 # Centralized configuration (timeouts, defaults)
 ├── tests/                            # Unit and integration tests
 │   ├── conftest.py                  # Shared pytest fixtures
-│   ├── test_*.py                    # Test modules (188 tests)
+│   ├── test_*.py                    # Test modules (419 tests)
 │   └── ...
 ├── config/                           # Configuration files
 │   └── image_tiers.yaml             # Cached image tier mappings
@@ -211,6 +221,16 @@ gauge/
 - CISA catalog fetching
 - O(1) CVE lookups with dictionary
 - Detailed KEV entry information
+
+**`dfc_mappings.py`** - DFC mappings
+- Fetches DFC image mappings from GitHub
+- Parses YAML configuration
+- Caching for performance
+
+**`github_issue_search.py`** - Issue search
+- GitHub API client for image request issues
+- Searches chainguard-dev/image-requests repository
+- Returns issue metadata and URLs
 
 #### Outputs (`src/outputs/`)
 
@@ -309,6 +329,46 @@ gauge/
 - Containerized CHPS execution
 - Score parsing and validation
 - Component scoring breakdown
+
+**`dfc_contributor.py`** - DFC contribution
+- Generates DFC PR contribution files
+- YAML and patch file creation
+- High-confidence match extraction
+
+**`image_matcher.py`** - Image matching orchestration
+- 4-tier matching strategy coordination
+- Confidence scoring and method tracking
+- Match result aggregation
+
+**`image_utils.py`** - Image utilities
+- Image name parsing and normalization
+- Registry prefix handling
+- Tag extraction
+
+**`issue_matcher.py`** - GitHub issue matching
+- LLM-powered matching of images to existing GitHub issues
+- Searches chainguard-dev/image-requests repository
+- Returns confidence scores and issue URLs
+
+**`llm_matcher.py`** - AI image matching
+- Claude LLM integration for Tier 4 fuzzy matching
+- Catalog-based Chainguard image suggestions
+- Automatic verification of suggested images
+
+**`manual_mapping_populator.py`** - Mapping population
+- Auto-populates manual mappings with new discoveries
+- YAML file management
+- Deduplication handling
+
+**`token_manager.py`** - Registry authentication
+- Docker registry token management
+- Automatic token refresh
+- Multi-registry support (Docker Hub, GCR, etc.)
+
+**`upstream_finder.py`** - Upstream discovery
+- Multi-strategy upstream image discovery
+- Supports gcr.io, docker.io, quay.io, ghcr.io
+- Registry stripping and base extraction strategies
 
 ## Design Principles
 
@@ -453,7 +513,7 @@ class TestVulnerabilityCount:
 
 ### Test Coverage
 
-Current coverage: **188 tests passing**
+Current coverage: **419 tests passing**
 
 ## Code Style
 

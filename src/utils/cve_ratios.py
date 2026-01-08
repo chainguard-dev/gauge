@@ -13,6 +13,9 @@ from constants import CVE_MONTHLY_RATIOS
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache for API results to avoid repeated calls
+_ratios_cache: dict[str, dict[str, float]] = {}
+
 
 def get_cve_monthly_ratios(
     image_name: Optional[str] = None,
@@ -56,6 +59,12 @@ def get_cve_monthly_ratios(
             logger.debug(f"Could not parse Chainguard image name: {chainguard_image_name}, using static ratios")
             return CVE_MONTHLY_RATIOS
 
+        # Check cache first (keyed by repo:tag)
+        cache_key = f"{repo}:{tag}"
+        if cache_key in _ratios_cache:
+            logger.debug(f"Using cached CVE ratios for {cache_key}")
+            return _ratios_cache[cache_key]
+
         # Initialize API client
         api = ChainguardAPI()
 
@@ -73,10 +82,14 @@ def get_cve_monthly_ratios(
                 "LOW": dynamic_ratios.get("LOW", CVE_MONTHLY_RATIOS["LOW"]),
                 "NEGLIGIBLE": dynamic_ratios.get("UNKNOWN", CVE_MONTHLY_RATIOS["NEGLIGIBLE"]),
             }
+            # Cache the result
+            _ratios_cache[cache_key] = normalized
             return normalized
         else:
             image_desc = f"{image_name} ({repo}:{tag})" if image_name else f"{repo}:{tag}"
             logger.debug(f"No dynamic data available for {image_desc}, using static ratios")
+            # Cache the fallback to avoid repeated failed API calls
+            _ratios_cache[cache_key] = CVE_MONTHLY_RATIOS
             return CVE_MONTHLY_RATIOS
 
     except RuntimeError as e:

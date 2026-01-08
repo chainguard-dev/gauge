@@ -12,6 +12,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# ASCII art logo for Gauge
+GAUGE_BANNER = r"""
+    ██████╗  █████╗ ██╗   ██╗ ██████╗ ███████╗
+   ██╔════╝ ██╔══██╗██║   ██║██╔════╝ ██╔════╝
+   ██║  ███╗███████║██║   ██║██║  ███╗█████╗
+   ██║   ██║██╔══██║██║   ██║██║   ██║██╔══╝
+   ╚██████╔╝██║  ██║╚██████╔╝╚██████╔╝███████╗
+    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚══════╝
+"""
+
 from constants import (
     DEFAULT_HOURS_PER_VULNERABILITY,
     DEFAULT_HOURLY_RATE,
@@ -25,6 +35,11 @@ from constants import (
 )
 from common import OUTPUT_CONFIGS, GitHubAuthValidator
 from core.orchestrator import GaugeOrchestrator
+
+
+def print_banner():
+    """Print the Gauge ASCII art banner."""
+    print(GAUGE_BANNER)
 
 
 def setup_logging(verbose: bool = False):
@@ -124,6 +139,7 @@ def main():
     """Main entry point for the scan command."""
     args = parse_args()
     setup_logging(args.verbose)
+    print_banner()
 
     if args.with_all:
         args.with_chps = True
@@ -172,6 +188,7 @@ def main_match():
 
     args = parser.parse_args()
     setup_logging(args.verbose)
+    print_banner()
     logger = logging.getLogger(__name__)
 
     # Basic validation

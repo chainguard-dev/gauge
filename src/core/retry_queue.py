@@ -108,3 +108,20 @@ class RetryQueue:
             True if queue is empty, False otherwise
         """
         return len(self._queue) == 0
+
+    def remove(self, failed_pull: FailedImagePull) -> bool:
+        """
+        Remove a specific failed pull from the queue.
+
+        Args:
+            failed_pull: The FailedImagePull record to remove
+
+        Returns:
+            True if item was found and removed, False otherwise
+        """
+        try:
+            self._queue.remove(failed_pull)
+            logger.debug(f"Removed {failed_pull.image} from retry queue")
+            return True
+        except ValueError:
+            return False
