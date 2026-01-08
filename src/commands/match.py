@@ -232,6 +232,11 @@ def match_images(
             for image in no_issue_matches:
                 logger.info(f"  - {image}")
 
+        # Write unmatched file with issue search results
+        unmatched_file = output_file.parent / "unmatched.txt"
+        write_unmatched_file(unmatched_file, issue_matches, no_issue_matches)
+        logger.info(f"\nUnmatched images written to {unmatched_file}")
+
     # Generate DFC contribution files if requested
     if dfc_contributor and dfc_contributor.suggestions:
         logger.info(f"\nGenerating DFC contribution files...")
@@ -388,11 +393,48 @@ def write_matched_intake(file_path: Path, pairs: list[tuple[str, MatchResult]]) 
             writer.writerow([alt, result.chainguard_image])
 
 
-def write_unmatched_file(file_path: Path, images: list[str]) -> None:
-    """Write unmatched images to text file."""
+def write_unmatched_file(
+    file_path: Path,
+    issue_matches: list[tuple[str, IssueMatchResult]],
+    no_issue_matches: list[str],
+) -> None:
+    """
+    Write unmatched images and their GitHub issue search results to a file.
+
+    Args:
+        file_path: Output file path
+        issue_matches: List of (image, IssueMatchResult) for images with matching issues
+        no_issue_matches: List of images with no matching issues
+    """
     with open(file_path, "w", encoding="utf-8") as f:
-        for image in images:
-            f.write(f"{image}\n")
+        f.write("=" * 80 + "\n")
+        f.write("UNMATCHED IMAGES - GitHub Issue Search Results\n")
+        f.write("=" * 80 + "\n\n")
+
+        # Write images with matching issues
+        if issue_matches:
+            f.write("EXISTING GITHUB ISSUES FOUND:\n")
+            f.write("-" * 40 + "\n")
+            for image, result in issue_matches:
+                f.write(f"\n  Image: {image}\n")
+                f.write(f"  Issue: {result.matched_issue.title}\n")
+                f.write(f"  URL: {result.matched_issue.url}\n")
+                f.write(f"  Confidence: {result.confidence:.0%}\n")
+            f.write("\n")
+
+        # Write images with no matching issues
+        if no_issue_matches:
+            f.write("NO MATCHING ISSUES FOUND:\n")
+            f.write("-" * 40 + "\n")
+            for image in no_issue_matches:
+                f.write(f"  - {image}\n")
+            f.write("\n")
+
+        # Summary
+        total = len(issue_matches) + len(no_issue_matches)
+        f.write("=" * 80 + "\n")
+        f.write(f"Summary: {len(issue_matches)} with existing issues, {len(no_issue_matches)} with no issues (total: {total})\n")
+        f.write("=" * 80 + "\n")
 
 
 def handle_interactive_match(alt_image: str, result: MatchResult) -> Optional[tuple[str, str]]:

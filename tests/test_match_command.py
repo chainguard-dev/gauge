@@ -181,22 +181,45 @@ class TestWriteOutputFiles:
                           "upstream_confidence", "match_confidence", "upstream_method", "match_method"]
 
     def test_write_unmatched_file(self, tmp_path):
-        """Test writing unmatched images to text file."""
-        output_file = tmp_path / "unmatched.txt"
-        images = [
-            "custom-app:v1.0",
-            "internal-tool:latest",
-        ]
+        """Test writing unmatched images with issue search results to text file."""
+        from integrations.github_issue_search import GitHubIssue
+        from utils.issue_matcher import IssueMatchResult
 
-        write_unmatched_file(output_file, images)
+        output_file = tmp_path / "unmatched.txt"
+
+        # Create mock issue match result
+        mock_issue = GitHubIssue(
+            number=123,
+            title="Request: custom-app",
+            body="Please add custom-app",
+            url="https://github.com/chainguard-dev/image-requests/issues/123",
+            labels=["image-request"],
+            state="open",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        issue_match_result = IssueMatchResult(
+            image_name="custom-app:v1.0",
+            matched_issue=mock_issue,
+            confidence=0.95,
+            reasoning="Direct match",
+        )
+
+        issue_matches = [("custom-app:v1.0", issue_match_result)]
+        no_issue_matches = ["internal-tool:latest"]
+
+        write_unmatched_file(output_file, issue_matches, no_issue_matches)
 
         # Verify file contents
         content = output_file.read_text()
-        lines = content.strip().split("\n")
 
-        assert len(lines) == 2
-        assert lines[0] == "custom-app:v1.0"
-        assert lines[1] == "internal-tool:latest"
+        assert "UNMATCHED IMAGES" in content
+        assert "EXISTING GITHUB ISSUES FOUND" in content
+        assert "custom-app:v1.0" in content
+        assert "Request: custom-app" in content
+        assert "https://github.com/chainguard-dev/image-requests/issues/123" in content
+        assert "NO MATCHING ISSUES FOUND" in content
+        assert "internal-tool:latest" in content
+        assert "Summary: 1 with existing issues, 1 with no issues (total: 2)" in content
 
 
 class TestMatchImages:
