@@ -219,7 +219,7 @@ class RegistryAccessChecker:
         # Check if we have Docker credentials for Iron Bank
         # Try to verify the image exists (this will use Docker's credential chain)
         try:
-            accessible = image_exists_in_registry(image, timeout=10)
+            accessible = image_exists_in_registry(image)
             if accessible:
                 logger.info(
                     f"Iron Bank registry accessible - will use Iron Bank images directly"
