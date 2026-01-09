@@ -231,9 +231,8 @@ def match_images(
 
             # Output list of images with no matching issues
             if no_issue_matches:
-                logger.info(f"\nNo matching issues found for {len(no_issue_matches)} images:")
-                for image in no_issue_matches:
-                    logger.info(f"  - {image}")
+                images_list = "\n".join(f"  - {image}" for image in no_issue_matches)
+                logger.info(f"\nNo matching issues found for {len(no_issue_matches)} images:\n{images_list}")
 
             # Write unmatched file with issue search results
             unmatched_file = output_file.parent / "unmatched.txt"

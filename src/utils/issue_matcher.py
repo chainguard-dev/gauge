@@ -169,9 +169,8 @@ def log_issue_search_results(
         logger.info("=" * 80)
 
     if no_issue_matches:
-        logger.info(f"\nNo matching GitHub issues found for {len(no_issue_matches)} images:")
-        for image in no_issue_matches:
-            logger.info(f"  - {image}")
+        images_list = "\n".join(f"  - {image}" for image in no_issue_matches)
+        logger.info(f"\nNo matching GitHub issues found for {len(no_issue_matches)} images:\n{images_list}")
 
 
 @dataclass
