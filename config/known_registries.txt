@@ -1,0 +1,16 @@
+# Known Registries Configuration
+#
+# List registries that you have already authenticated to (one per line).
+# These registries will skip upstream discovery since images can be pulled directly.
+#
+# Examples:
+#   artifactory.mycompany.com
+#   123456789.dkr.ecr.us-east-1.amazonaws.com
+#   myregistry.azurecr.io
+#
+# Note: Public registries (docker.io, gcr.io, ghcr.io, quay.io, etc.) and
+# Iron Bank (registry1.dso.mil) are handled automatically.
+#
+# Lines starting with # are comments and will be ignored.
+# Empty lines are also ignored.
+

@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
 from constants import (
     CHAINGUARD_PRIVATE_REGISTRY,
     CHAINGUARD_PUBLIC_REGISTRY,
@@ -23,6 +21,8 @@ from constants import (
 from integrations.dfc_mappings import DFCMappings
 from integrations.github_metadata import GitHubMetadataClient
 from utils.image_verification import ImageVerificationService
+from utils.llm_utils import load_yaml_mappings
+from utils.registry_access import RegistryAccessChecker
 from utils.upstream_finder import UpstreamImageFinder
 
 logger = logging.getLogger(__name__)
@@ -454,27 +454,9 @@ class Tier2ManualMatcher(TierMatcher):
 
     def _load_manual_mappings(self) -> None:
         """Load manual override mappings from YAML file."""
-        if not self.manual_mappings_file.exists():
-            logger.debug(f"No manual mappings file found at {self.manual_mappings_file}")
-            return
-
-        try:
-            with open(self.manual_mappings_file, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-
-            if not data:
-                logger.debug("Manual mappings file is empty")
-                return
-
-            if not isinstance(data, dict):
-                logger.warning(f"Invalid manual mappings format in {self.manual_mappings_file}")
-                return
-
+        data = load_yaml_mappings(self.manual_mappings_file, "manual image mappings")
+        if data:
             self.manual_mappings = data
-            logger.info(f"Loaded {len(self.manual_mappings)} manual image mappings")
-
-        except Exception as e:
-            logger.warning(f"Failed to load manual mappings: {e}")
 
 
 class Tier3HeuristicMatcher(TierMatcher):
@@ -666,6 +648,7 @@ class ImageMatcher:
         github_token: Optional[str] = None,
         upstream_finder: Optional[UpstreamImageFinder] = None,
         llm_matcher=None,
+        registry_checker: Optional[RegistryAccessChecker] = None,
     ):
         """
         Initialize image matcher coordinator.
@@ -677,8 +660,10 @@ class ImageMatcher:
             github_token: GitHub token for metadata API access
             upstream_finder: Optional upstream image finder for discovering public equivalents
             llm_matcher: Optional LLM matcher for Tier 4 fuzzy matching
+            registry_checker: Optional registry access checker for skipping upstream discovery
         """
         self.upstream_finder = upstream_finder
+        self.registry_checker = registry_checker
 
         # Initialize tier-based matchers
         self.tier1 = Tier1DFCMatcher(cache_dir=cache_dir, dfc_mappings_file=dfc_mappings_file)
@@ -698,11 +683,20 @@ class ImageMatcher:
         Returns:
             MatchResult with matched image and metadata
         """
-        # Step 1: Try upstream discovery (if enabled)
+        # Step 1: Check if registry is accessible (skip upstream discovery if so)
         upstream_result = None
         image_to_match = alternative_image
+        skip_upstream = False
 
-        if self.upstream_finder:
+        if self.registry_checker:
+            if self.registry_checker.is_accessible(alternative_image):
+                # Registry is known and accessible - match directly
+                registry = self.registry_checker.get_registry(alternative_image)
+                logger.debug(f"Registry '{registry}' is accessible - skipping upstream discovery")
+                skip_upstream = True
+
+        # Step 2: Try upstream discovery (only if registry not accessible)
+        if self.upstream_finder and not skip_upstream:
             upstream_result = self.upstream_finder.find_upstream(alternative_image)
             if upstream_result.upstream_image:
                 logger.info(
@@ -711,7 +705,7 @@ class ImageMatcher:
                 )
                 image_to_match = upstream_result.upstream_image
 
-        # Step 2: Try all tiers with the image to match (upstream if found, original otherwise)
+        # Step 3: Try all tiers with the image to match (upstream if found, original otherwise)
         for tier_matcher in [self.tier1, self.tier2, self.tier3, self.tier4]:
             if tier_matcher is None:
                 continue

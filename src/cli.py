@@ -28,12 +28,10 @@ from constants import (
     DEFAULT_MAX_WORKERS,
     DEFAULT_PLATFORM,
     DEFAULT_MATCH_CONFIDENCE,
-    DEFAULT_UPSTREAM_CONFIDENCE,
-    DEFAULT_LLM_CONFIDENCE,
     DEFAULT_LLM_MODEL,
     DEFAULT_CHPS_MAX_WORKERS,
 )
-from common import OUTPUT_CONFIGS, GitHubAuthValidator
+from common import OUTPUT_CONFIGS, GitHubAuthValidator, add_matching_arguments
 from core.orchestrator import GaugeOrchestrator
 
 
@@ -101,18 +99,8 @@ def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
     cache_group.add_argument("--resume", action="store_true", help="Resume from checkpoint.")
     cache_group.add_argument("--checkpoint-file", type=Path, default=Path(".gauge_checkpoint.json"), help="Checkpoint file.")
 
-    # Matching options
-    matching_group.add_argument("--min-confidence", type=float, default=DEFAULT_MATCH_CONFIDENCE, help="Min match confidence.")
-    matching_group.add_argument("--dfc-mappings-file", type=Path, help="Local DFC mappings file.")
-    matching_group.add_argument("--skip-public-repo-search", action="store_true", help="Skip upstream discovery.")
-    matching_group.add_argument("--upstream-confidence", type=float, default=DEFAULT_UPSTREAM_CONFIDENCE, help="Upstream discovery confidence.")
-    matching_group.add_argument("--upstream-mappings-file", type=Path, help="Manual upstream mappings file.")
-    matching_group.add_argument("--disable-llm-matching", action="store_true", help="Disable LLM matching.")
-    matching_group.add_argument("--llm-model", type=str, default=DEFAULT_LLM_MODEL, help="Claude model for matching.")
-    matching_group.add_argument("--llm-confidence-threshold", type=float, default=DEFAULT_LLM_CONFIDENCE, help="LLM match confidence.")
-    matching_group.add_argument("--anthropic-api-key", type=str, help="Anthropic API key.")
-    matching_group.add_argument("--generate-dfc-pr", action="store_true", help="Generate DFC contribution files.")
-    matching_group.add_argument("--disable-mapping-auto-population", action="store_true", help="Disable auto-populating mappings.")
+    # Matching options (shared with match subcommand)
+    add_matching_arguments(matching_group)
 
     # Optional features
     features_group.add_argument("--with-chps", action="store_true", help="Include CHPS scoring.")
@@ -161,30 +149,26 @@ def main_dispatch():
 
 def main_match():
     """Match command entry point."""
-    # This function remains large as it handles a separate command.
-    # A similar refactoring could be applied to it in the future.
     parser = argparse.ArgumentParser(
         prog="gauge match",
         description="Match alternative container images to Chainguard equivalents",
     )
-    # Simplified parser for brevity
+
+    # Match-specific arguments
     parser.add_argument("-i", "--input", type=Path, required=True, help="Input file with images.")
     parser.add_argument("-o", "--output", type=Path, default=Path("output/matched-log.csv"), help="Output CSV file.")
     parser.add_argument("--interactive", action="store_true", help="Enable interactive mode.")
     parser.add_argument("--github-token", type=str, help="GitHub token for issue search.")
-    parser.add_argument("--min-confidence", type=float, default=DEFAULT_MATCH_CONFIDENCE, help="Minimum match confidence.")
-    parser.add_argument("--dfc-mappings-file", type=Path, help="Local DFC mappings file.")
     parser.add_argument("--cache-dir", type=Path, help="Cache directory.")
-    parser.add_argument("--skip-public-repo-search", action="store_true", help="Skip upstream discovery.")
-    parser.add_argument("--upstream-confidence", type=float, default=DEFAULT_UPSTREAM_CONFIDENCE, help="Upstream match confidence.")
-    parser.add_argument("--upstream-mappings-file", type=Path, help="Manual upstream mappings file.")
-    parser.add_argument("--disable-llm-matching", action="store_true", help="Disable LLM matching.")
-    parser.add_argument("--llm-model", type=str, default=DEFAULT_LLM_MODEL, help="Claude model for matching.")
-    parser.add_argument("--llm-confidence-threshold", type=float, default=DEFAULT_LLM_CONFIDENCE, help="LLM match confidence.")
-    parser.add_argument("--anthropic-api-key", type=str, help="Anthropic API key.")
-    parser.add_argument("--generate-dfc-pr", action="store_true", help="Generate DFC contribution files.")
-    parser.add_argument("--disable-mapping-auto-population", action="store_true", help="Disable auto-populating mappings.")
+    parser.add_argument(
+        "--known-registries",
+        type=str,
+        help="Comma-separated list of registries you have credentials for (skips upstream discovery)."
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
+
+    # Shared matching arguments
+    add_matching_arguments(parser)
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -197,6 +181,12 @@ def main_match():
         sys.exit(1)
 
     from commands.match import match_images
+
+    # Parse known registries from comma-separated string
+    known_registries = None
+    if args.known_registries:
+        known_registries = [r.strip() for r in args.known_registries.split(",") if r.strip()]
+
     try:
         _, unmatched_images = match_images(
             input_file=args.input,
@@ -214,6 +204,7 @@ def main_match():
             anthropic_api_key=args.anthropic_api_key,
             generate_dfc_pr=args.generate_dfc_pr,
             github_token=args.github_token,
+            known_registries=known_registries,
         )
         if not unmatched_images:
             logger.info("All images matched successfully.")

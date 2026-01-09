@@ -8,19 +8,99 @@ repository using Claude API.
 import json
 import logging
 import os
-import sqlite3
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Optional
 
 import anthropic
 
 from constants import DEFAULT_ISSUE_MATCH_CONFIDENCE, DEFAULT_LLM_MODEL
-from integrations.github_issue_search import GitHubIssue
+from integrations.github_issue_search import GitHubIssue, GitHubIssueSearchClient
+from utils.llm_utils import db_connection, parse_json_response
 
 logger = logging.getLogger(__name__)
+
+
+def search_github_issues_for_images(
+    unmatched_images: list[str],
+    anthropic_api_key: Optional[str] = None,
+    llm_model: str = DEFAULT_LLM_MODEL,
+    cache_dir: Optional[Path] = None,
+    confidence_threshold: float = DEFAULT_ISSUE_MATCH_CONFIDENCE,
+    github_token: Optional[str] = None,
+) -> tuple[list[tuple[str, "IssueMatchResult"]], list[str]]:
+    """
+    Search GitHub issues for unmatched images.
+
+    This is a convenience function that initializes the GitHub client and
+    IssueMatcher, then searches for all unmatched images.
+
+    Args:
+        unmatched_images: List of image names to search for
+        anthropic_api_key: Anthropic API key for LLM matching
+        llm_model: Claude model to use
+        cache_dir: Cache directory for results
+        confidence_threshold: Minimum confidence for matches
+        github_token: GitHub token for API access
+
+    Returns:
+        Tuple of (issue_matches, no_issue_matches) where:
+        - issue_matches: List of (image, IssueMatchResult) for images with matching issues
+        - no_issue_matches: List of image names with no matching issues
+
+    Raises:
+        ValueError: If GitHub authentication fails
+    """
+    github_client = GitHubIssueSearchClient(github_token=github_token)
+    issue_matcher = IssueMatcher(
+        api_key=anthropic_api_key,
+        model=llm_model,
+        cache_dir=cache_dir,
+        confidence_threshold=confidence_threshold,
+    )
+    open_issues = github_client.get_open_issues()
+    logger.info(f"Searching {len(open_issues)} open GitHub issues for {len(unmatched_images)} unmatched images...")
+
+    issue_matches = []
+    no_issue_matches = []
+
+    for image in unmatched_images:
+        result = issue_matcher.match(image, open_issues)
+        if result.matched_issue:
+            issue_matches.append((image, result))
+        else:
+            no_issue_matches.append(image)
+
+    return issue_matches, no_issue_matches
+
+
+def log_issue_search_results(
+    issue_matches: list[tuple[str, "IssueMatchResult"]],
+    no_issue_matches: list[str],
+) -> None:
+    """
+    Log GitHub issue search results.
+
+    Args:
+        issue_matches: List of (image, IssueMatchResult) for images with matching issues
+        no_issue_matches: List of image names with no matching issues
+    """
+    if issue_matches:
+        logger.info("\n" + "=" * 80)
+        logger.info("Existing GitHub Issues Found for Unmatched Images:")
+        logger.info("=" * 80)
+        for image, result in issue_matches:
+            logger.info(f"  {image}")
+            logger.info(f"    Issue: {result.matched_issue.title}")
+            logger.info(f"    URL: {result.matched_issue.url}")
+            logger.info(f"    Confidence: {result.confidence:.0%}")
+        logger.info("=" * 80)
+
+    if no_issue_matches:
+        logger.info(f"\nNo matching GitHub issues found for {len(no_issue_matches)} images:")
+        for image in no_issue_matches:
+            logger.info(f"  - {image}")
 
 
 @dataclass
@@ -95,18 +175,9 @@ class IssueMatcher:
         # Telemetry
         self.telemetry_file = self.cache_dir / "issue_match_telemetry.jsonl"
 
-    @contextmanager
-    def _db_connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Context manager for SQLite database connections."""
-        conn = sqlite3.connect(self.cache_db)
-        try:
-            yield conn
-        finally:
-            conn.close()
-
     def _init_cache_db(self) -> None:
         """Initialize SQLite cache database with issue_match_cache table."""
-        with self._db_connection() as conn:
+        with db_connection(self.cache_db) as conn:
             cursor = conn.cursor()
             # Separate table from llm_cache to avoid conflicts
             cursor.execute(
@@ -138,7 +209,7 @@ class IssueMatcher:
         Returns:
             Cached result if available and valid, None otherwise
         """
-        with self._db_connection() as conn:
+        with db_connection(self.cache_db) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -192,7 +263,7 @@ class IssueMatcher:
         Args:
             result: Match result to cache
         """
-        with self._db_connection() as conn:
+        with db_connection(self.cache_db) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -301,17 +372,6 @@ Respond with ONLY the JSON output, no additional text."""
 
         return prompt
 
-    def _parse_json_response(self, response_text: str) -> str:
-        """Parse JSON from LLM response, handling markdown code blocks."""
-        response_text = response_text.strip()
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        return response_text.strip()
-
     def match(self, image_name: str, issues: list[GitHubIssue]) -> IssueMatchResult:
         """
         Match an unmatched image to a GitHub issue.
@@ -364,7 +424,7 @@ Respond with ONLY the JSON output, no additional text."""
             )
 
             latency_ms = (time.time() - start_time) * 1000
-            response_text = self._parse_json_response(message.content[0].text)
+            response_text = parse_json_response(message.content[0].text)
             response = json.loads(response_text)
 
             issue_number = response.get("issue_number")

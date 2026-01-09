@@ -8,12 +8,15 @@ to determine pricing tiers.
 import logging
 import os
 import subprocess
+import time
+from pathlib import Path
 from typing import Optional
 
 import requests
 import yaml
 
 from core.models import ImageTier
+from utils.llm_utils import db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +58,21 @@ def get_github_token_from_gh_cli() -> Optional[str]:
 class GitHubMetadataClient:
     """Client for fetching Chainguard image metadata from GitHub."""
 
-    def __init__(self, github_token: Optional[str] = None):
+    # Cache TTL: 24 hours (tiers rarely change)
+    CACHE_TTL_SECONDS = 86400
+
+    def __init__(
+        self,
+        github_token: Optional[str] = None,
+        cache_dir: Optional[Path] = None,
+    ):
         """
         Initialize GitHub metadata client.
 
         Args:
             github_token: Optional GitHub token for API access.
                          Falls back to GITHUB_TOKEN env var, then gh CLI.
+            cache_dir: Directory for SQLite cache (default: ~/.cache/gauge)
         """
         # Try explicit token, then env var, then gh CLI
         self.token = github_token or os.getenv("GITHUB_TOKEN") or get_github_token_from_gh_cli()
@@ -80,6 +91,80 @@ class GitHubMetadataClient:
         }
         if self.token:
             self.headers["Authorization"] = f"token {self.token}"
+
+        # Initialize cache
+        self.cache_dir = cache_dir or Path.home() / ".cache" / "gauge"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_db = self.cache_dir / "llm_cache.db"
+        self._init_cache_db()
+
+    def _init_cache_db(self) -> None:
+        """Initialize SQLite cache database with github_metadata_cache table."""
+        with db_connection(self.cache_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS github_metadata_cache (
+                    image_name TEXT PRIMARY KEY,
+                    tier TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL
+                )
+            """
+            )
+            conn.commit()
+
+    def _get_cached_tier(self, image_name: str) -> Optional[ImageTier]:
+        """
+        Get cached tier for image.
+
+        Args:
+            image_name: Image name to look up
+
+        Returns:
+            Cached ImageTier if available and not expired, None otherwise
+        """
+        with db_connection(self.cache_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT tier, timestamp FROM github_metadata_cache
+                WHERE image_name = ?
+            """,
+                (image_name,),
+            )
+            row = cursor.fetchone()
+
+        if row:
+            tier_value, timestamp = row
+            age = time.time() - timestamp
+            if age < self.CACHE_TTL_SECONDS:
+                logger.debug(f"Cache hit for GitHub metadata: {image_name} (age: {age:.0f}s)")
+                try:
+                    return ImageTier(tier_value)
+                except ValueError:
+                    pass  # Invalid cached value, will refetch
+
+        return None
+
+    def _cache_tier(self, image_name: str, tier: ImageTier) -> None:
+        """
+        Cache tier result.
+
+        Args:
+            image_name: Image name
+            tier: Tier to cache
+        """
+        with db_connection(self.cache_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO github_metadata_cache
+                (image_name, tier, timestamp)
+                VALUES (?, ?, ?)
+            """,
+                (image_name, tier.value, int(time.time())),
+            )
+            conn.commit()
 
     def get_image_tier(self, image_name: str) -> ImageTier:
         """
@@ -100,6 +185,11 @@ class GitHubMetadataClient:
             image_name = image_name.split("/")[-1]
         if ":" in image_name:
             image_name = image_name.split(":")[0]
+
+        # Check cache first
+        cached_tier = self._get_cached_tier(image_name)
+        if cached_tier:
+            return cached_tier
 
         logger.debug(f"Fetching GitHub metadata for image: {image_name}")
 
@@ -123,6 +213,8 @@ class GitHubMetadataClient:
             try:
                 tier = ImageTier(tier_value.lower())
                 logger.info(f"Found tier '{tier.value}' for image {image_name}")
+                # Cache the result
+                self._cache_tier(image_name, tier)
                 return tier
             except ValueError:
                 raise ValueError(

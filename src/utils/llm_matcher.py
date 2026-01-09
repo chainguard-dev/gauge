@@ -13,15 +13,15 @@ import shutil
 import sqlite3
 import subprocess
 import time
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Optional
 
 import anthropic
 
 from constants import CLI_SUBPROCESS_TIMEOUT, DEFAULT_LLM_CONFIDENCE
 from integrations.github_metadata import GitHubMetadataClient
+from utils.llm_utils import db_connection, parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -107,18 +107,9 @@ class LLMMatcher:
         # Telemetry
         self.telemetry_file = self.cache_dir / "llm_telemetry.jsonl"
 
-    @contextmanager
-    def _db_connection(self) -> Generator[sqlite3.Connection, None, None]:
-        """Context manager for SQLite database connections."""
-        conn = sqlite3.connect(self.cache_db)
-        try:
-            yield conn
-        finally:
-            conn.close()
-
     def _init_cache_db(self) -> None:
         """Initialize SQLite cache database."""
-        with self._db_connection() as conn:
+        with db_connection(self.cache_db) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -144,7 +135,7 @@ class LLMMatcher:
         Returns:
             Cached result if available, None otherwise
         """
-        with self._db_connection() as conn:
+        with db_connection(self.cache_db) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -183,7 +174,7 @@ class LLMMatcher:
             confidence: Confidence score
             reasoning: LLM reasoning
         """
-        with self._db_connection() as conn:
+        with db_connection(self.cache_db) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -223,6 +214,9 @@ class LLMMatcher:
         with open(self.telemetry_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(telemetry) + "\n")
 
+    # Cache TTL for catalog: 1 hour
+    CATALOG_CACHE_TTL_SECONDS = 3600
+
     def _load_full_catalog(self, org: str = "chainguard-private") -> list[str]:
         """
         Load the full Chainguard image catalog at initialization.
@@ -233,6 +227,20 @@ class LLMMatcher:
         Returns:
             List of all available image names
         """
+        # Check cache first
+        catalog_cache_file = self.cache_dir / f"chainguard_catalog_{org}.json"
+        if catalog_cache_file.exists():
+            try:
+                with open(catalog_cache_file, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
+                cache_time = cache_data.get("timestamp", 0)
+                if time.time() - cache_time < self.CATALOG_CACHE_TTL_SECONDS:
+                    images = cache_data.get("images", [])
+                    logger.debug(f"Using cached catalog ({len(images)} images, age: {time.time() - cache_time:.0f}s)")
+                    return images
+            except (json.JSONDecodeError, OSError) as e:
+                logger.debug(f"Failed to load catalog cache: {e}")
+
         if not shutil.which("chainctl"):
             logger.debug("chainctl not available for catalog loading")
             return []
@@ -252,6 +260,16 @@ class LLMMatcher:
             repos_data = json.loads(result.stdout)
             items = repos_data.get("items", [])
             all_images = sorted([item.get("name", "") for item in items if item.get("name")])
+
+            # Cache the catalog
+            try:
+                cache_data = {"timestamp": time.time(), "images": all_images}
+                with open(catalog_cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f)
+                logger.debug(f"Cached {len(all_images)} images to {catalog_cache_file}")
+            except OSError as e:
+                logger.debug(f"Failed to cache catalog: {e}")
+
             return all_images
 
         except subprocess.TimeoutExpired:
@@ -498,7 +516,7 @@ If you cannot find information, say "Unknown image".""",
             )
 
             latency_ms = (time.time() - start_time) * 1000
-            response_text = self._parse_json_response(message.content[0].text)
+            response_text = parse_json_response(message.content[0].text)
             response = json.loads(response_text)
 
             # Validate the suggested image is in the catalog
@@ -593,17 +611,6 @@ Search the web if needed to find accurate information. Be concise."""
             confidence=0.0,
             reasoning="No match found after iterative refinement",
         )
-
-    def _parse_json_response(self, response_text: str) -> str:
-        """Parse JSON from LLM response, handling markdown code blocks."""
-        response_text = response_text.strip()
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        return response_text.strip()
 
     def _build_catalog_prompt(self, image_name: str, context: str = "") -> str:
         """
@@ -786,7 +793,7 @@ Respond with ONLY the JSON output, no additional text."""
                 )
 
             # Parse JSON from response, handling markdown code blocks
-            response_text = self._parse_json_response(response_text)
+            response_text = parse_json_response(response_text)
             response = json.loads(response_text)
 
             result = LLMMatchResult(

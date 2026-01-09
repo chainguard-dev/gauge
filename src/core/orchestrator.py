@@ -12,6 +12,7 @@ from typing import Optional
 from common import OUTPUT_CONFIGS, GitHubAuthValidator
 from core.cache import ScanCache
 from core.models import ImagePair
+from utils.issue_matcher import search_github_issues_for_images, log_issue_search_results
 from core.scanner import VulnerabilityScanner
 from integrations.kev_catalog import KEVCatalog
 from outputs.config import HTMLGeneratorConfig, XLSXGeneratorConfig
@@ -403,6 +404,10 @@ class GaugeOrchestrator:
         if unmatched:
             unmatched_list = "\n".join(f"  - {img}" for img in unmatched)
             logger.warning(f"\n{len(unmatched)} images could not be auto-matched:\n{unmatched_list}\n")
+
+            # Search GitHub issues for unmatched images
+            self._search_github_issues_for_unmatched(unmatched)
+
         # Display successful matches summary
         if pairs:
             matches_list = "\n".join(
@@ -411,6 +416,24 @@ class GaugeOrchestrator:
             )
             logger.info(f"\nSuccessful matches:\n{matches_list}")
         return pairs, unmatched
+
+    def _search_github_issues_for_unmatched(self, unmatched: list[str]) -> None:
+        """Search GitHub issues for unmatched images."""
+        try:
+            issue_matches, no_issue_matches = search_github_issues_for_images(
+                unmatched_images=unmatched,
+                anthropic_api_key=self.args.anthropic_api_key,
+                llm_model=self.args.llm_model,
+                cache_dir=self.args.cache_dir,
+                confidence_threshold=self.args.llm_confidence_threshold,
+                github_token=getattr(self.args, 'github_token', None),
+            )
+            log_issue_search_results(issue_matches, no_issue_matches)
+        except ValueError as e:
+            # GitHub token not available - skip issue search silently
+            logger.debug(f"GitHub issue search skipped: {e}")
+        except Exception as e:
+            logger.warning(f"GitHub issue search failed: {e}")
 
     def _execute_scans(self) -> list:
         """Execute scans with checkpoint/resume support."""

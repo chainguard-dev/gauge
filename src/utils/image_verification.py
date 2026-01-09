@@ -22,6 +22,8 @@ class ImageVerificationService:
     Uses a two-tier verification strategy:
     1. GitHub metadata API (fast, preferred)
     2. Docker manifest inspect (fallback)
+
+    Results are cached in-memory to avoid redundant verification calls.
     """
 
     def __init__(self, github_token: Optional[str] = None):
@@ -32,6 +34,8 @@ class ImageVerificationService:
             github_token: Optional GitHub token for metadata API access
         """
         self.github_metadata = GitHubMetadataClient(github_token=github_token)
+        # In-memory cache for verification results (per instance)
+        self._verification_cache: dict[str, bool] = {}
 
     def verify_image_exists(
         self,
@@ -48,23 +52,33 @@ class ImageVerificationService:
         Returns:
             True if image exists, False otherwise
         """
+        # Check in-memory cache first
+        if image in self._verification_cache:
+            logger.debug(f"Cache hit for image verification: {image}")
+            return self._verification_cache[image]
+
         # Only verify Chainguard images
         if not self._is_chainguard_image(image):
             logger.debug(f"Image {image} is not a Chainguard image")
+            self._verification_cache[image] = False
             return False
 
         image_name = self._extract_image_name(image)
         if not image_name:
             logger.debug(f"Could not extract image name from {image}")
+            self._verification_cache[image] = False
             return False
 
         # Try GitHub API first (if preferred)
         if prefer_github_api:
             if self._verify_via_github_api(image_name):
+                self._verification_cache[image] = True
                 return True
 
         # Fallback to Docker manifest inspection
-        return self._verify_via_docker(image)
+        result = self._verify_via_docker(image)
+        self._verification_cache[image] = result
+        return result
 
     def _is_chainguard_image(self, image: str) -> bool:
         """Check if image is from Chainguard registry."""

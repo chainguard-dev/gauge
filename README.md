@@ -371,6 +371,31 @@ gauge match --input images.txt -o matched.csv --upstream-confidence 0.8
 gauge match --input images.txt -o matched.csv --upstream-mappings-file config/upstream_mappings.yaml
 ```
 
+#### Known Registries (Skip Upstream Discovery)
+
+Upstream discovery is automatically **skipped** for registries that Gauge knows are accessible:
+
+- **Public registries**: docker.io, gcr.io, ghcr.io, quay.io, registry.k8s.io, mcr.microsoft.com, public.ecr.aws, etc.
+- **Iron Bank** (registry1.dso.mil): Checked for credentials; if authenticated, images are used directly
+- **User-configured registries**: Private registries you have credentials for
+
+**Configure known registries** in `config/known_registries.txt` (one per line):
+
+```txt
+# Private registries you have credentials for
+artifactory.mycompany.com
+myregistry.azurecr.io
+123456789.dkr.ecr.us-east-1.amazonaws.com
+```
+
+Or use the CLI flag for ad-hoc registries:
+
+```bash
+gauge match --input images.txt --known-registries "artifactory.mycompany.com,myregistry.azurecr.io"
+```
+
+Both the config file and CLI flag can be used together - registries from both sources are combined.
+
 **How it works:**
 1. Input: `mycompany.io/python-app:v1` or `internal-nginx:prod`
 2. **First Priority**: Check DFC and Manual Chainguard mappings with original image name
@@ -966,8 +991,12 @@ gauge --input images.csv --no-gcr-auth
 ```
 gauge/
 ├── src/                    # Source code (core, integrations, outputs, utils)
-├── tests/                  # Unit and integration tests (419 tests)
+├── tests/                  # Unit and integration tests (440+ tests)
 ├── config/                 # Configuration files
+│   ├── known_registries.txt    # User-configured accessible registries
+│   ├── image_mappings.yaml     # Manual Chainguard image mappings
+│   ├── upstream_mappings.yaml  # Manual upstream image mappings
+│   └── image_tiers.yaml        # Cached image tier classifications
 ├── resources/              # Static assets (logos, images)
 ├── example-images.csv      # Sample input file
 ├── sample-exec-summary.md  # Example template

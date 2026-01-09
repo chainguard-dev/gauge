@@ -264,15 +264,14 @@ images:
         ]
 
         # Run matching
-        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
-            mock_gh_client.return_value.get_open_issues.return_value = []
-            with patch('commands.match.IssueMatcher'):
-                matched, unmatched = match_images(
-                    input_file=input_file,
-                    output_file=output_file,
-                    min_confidence=0.7,
-                    github_token="test-token",
-                )
+        with patch('commands.match.search_github_issues_for_images') as mock_search:
+            mock_search.return_value = ([], [])  # No issue matches
+            matched, unmatched = match_images(
+                input_file=input_file,
+                output_file=output_file,
+                min_confidence=0.7,
+                github_token="test-token",
+            )
 
         # Verify results
         assert len(matched) == 2
@@ -307,22 +306,14 @@ images:
         ]
 
         # Run matching
-        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
-            mock_gh_client.return_value.get_open_issues.return_value = []
-            with patch('commands.match.IssueMatcher') as mock_issue_matcher:
-                from utils.issue_matcher import IssueMatchResult
-                mock_issue_matcher.return_value.match.return_value = IssueMatchResult(
-                    image_name="custom-app:v1.0",
-                    matched_issue=None,
-                    confidence=0.0,
-                    reasoning="No match",
-                )
-                matched, unmatched = match_images(
-                    input_file=input_file,
-                    output_file=output_file,
-                    min_confidence=0.7,
-                    github_token="test-token",
-                )
+        with patch('commands.match.search_github_issues_for_images') as mock_search:
+            mock_search.return_value = ([], ["custom-app:v1.0"])  # No issue matches
+            matched, unmatched = match_images(
+                input_file=input_file,
+                output_file=output_file,
+                min_confidence=0.7,
+                github_token="test-token",
+            )
 
         # Verify results
         assert len(matched) == 1
@@ -351,23 +342,15 @@ images:
         )
 
         # Run matching
-        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
-            mock_gh_client.return_value.get_open_issues.return_value = []
-            with patch('commands.match.IssueMatcher') as mock_issue_matcher:
-                from utils.issue_matcher import IssueMatchResult
-                mock_issue_matcher.return_value.match.return_value = IssueMatchResult(
-                    image_name="nginx:latest",
-                    matched_issue=None,
-                    confidence=0.0,
-                    reasoning="No match",
-                )
-                matched, unmatched = match_images(
-                    input_file=input_file,
-                    output_file=output_file,
-                    min_confidence=0.7,
-                    interactive=False,
-                    github_token="test-token",
-                )
+        with patch('commands.match.search_github_issues_for_images') as mock_search:
+            mock_search.return_value = ([], ["nginx:latest"])  # No issue matches
+            matched, unmatched = match_images(
+                input_file=input_file,
+                output_file=output_file,
+                min_confidence=0.7,
+                interactive=False,
+                github_token="test-token",
+            )
 
         # Verify low confidence is treated as unmatched
         assert len(matched) == 0
@@ -402,22 +385,14 @@ images:
         ]
 
         # Run matching with 0.7 threshold
-        with patch('commands.match.GitHubIssueSearchClient') as mock_gh_client:
-            mock_gh_client.return_value.get_open_issues.return_value = []
-            with patch('commands.match.IssueMatcher') as mock_issue_matcher:
-                from utils.issue_matcher import IssueMatchResult
-                mock_issue_matcher.return_value.match.return_value = IssueMatchResult(
-                    image_name="python:3.12",
-                    matched_issue=None,
-                    confidence=0.0,
-                    reasoning="No match",
-                )
-                matched, unmatched = match_images(
-                    input_file=input_file,
-                    output_file=output_file,
-                    min_confidence=0.7,
-                    github_token="test-token",
-                )
+        with patch('commands.match.search_github_issues_for_images') as mock_search:
+            mock_search.return_value = ([], ["python:3.12"])  # No issue matches
+            matched, unmatched = match_images(
+                input_file=input_file,
+                output_file=output_file,
+                min_confidence=0.7,
+                github_token="test-token",
+            )
 
         # Verify threshold filtering
         assert len(matched) == 1
