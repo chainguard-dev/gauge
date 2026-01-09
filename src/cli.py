@@ -156,7 +156,7 @@ def main_match():
 
     # Match-specific arguments
     parser.add_argument("-i", "--input", type=Path, required=True, help="Input file with images.")
-    parser.add_argument("-o", "--output", type=Path, default=Path("output/matched-log.csv"), help="Output CSV file.")
+    parser.add_argument("-o", "--output", type=Path, default=Path("output/matched-log.yaml"), help="Output YAML file with match details.")
     parser.add_argument("--interactive", action="store_true", help="Enable interactive mode.")
     parser.add_argument("--github-token", type=str, help="GitHub token for issue search.")
     parser.add_argument("--cache-dir", type=Path, help="Cache directory.")
@@ -165,6 +165,7 @@ def main_match():
         type=str,
         help="Comma-separated list of registries you have credentials for (skips upstream discovery)."
     )
+    parser.add_argument("--with-fips", action="store_true", help="Prefer FIPS variants of Chainguard images when available.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
 
     # Shared matching arguments
@@ -205,6 +206,7 @@ def main_match():
             generate_dfc_pr=args.generate_dfc_pr,
             github_token=args.github_token,
             known_registries=known_registries,
+            prefer_fips=args.with_fips,
         )
         if not unmatched_images:
             logger.info("All images matched successfully.")

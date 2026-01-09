@@ -360,11 +360,17 @@ class GaugeOrchestrator:
                 cache_dir=self.args.cache_dir,
                 confidence_threshold=self.args.llm_confidence_threshold,
             )
+        # Check if FIPS mode is enabled
+        prefer_fips = getattr(self.args, 'with_fips', False)
+        if prefer_fips:
+            logger.info("FIPS mode enabled - will prefer -fips variants when available")
+
         return ImageMatcher(
             cache_dir=self.args.cache_dir,
             dfc_mappings_file=self.args.dfc_mappings_file,
             upstream_finder=upstream_finder,
             llm_matcher=llm_matcher,
+            prefer_fips=prefer_fips,
         )
 
     def _auto_match_images(self, images: list[str], matcher) -> tuple[list[ImagePair], list[str]]:

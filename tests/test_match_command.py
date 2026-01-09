@@ -4,13 +4,14 @@ Tests for the match command functionality.
 
 import csv
 import pytest
+import yaml
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
 from commands.match import (
     match_images,
     read_input_file,
-    write_matched_csv,
+    write_matched_yaml,
     write_unmatched_file,
     handle_interactive_match,
 )
@@ -131,11 +132,11 @@ class TestReadInputFile:
 class TestWriteOutputFiles:
     """Test writing output files."""
 
-    def test_write_matched_csv(self, tmp_path):
-        """Test writing matched pairs to CSV."""
+    def test_write_matched_yaml(self, tmp_path):
+        """Test writing matched pairs to YAML."""
         from utils.image_matcher import MatchResult
 
-        output_file = tmp_path / "matched.csv"
+        output_file = tmp_path / "matched.yaml"
         pairs = [
             ("nginx:latest", MatchResult(
                 chainguard_image="cgr.dev/chainguard/nginx-fips:latest",
@@ -146,39 +147,75 @@ class TestWriteOutputFiles:
                 chainguard_image="cgr.dev/chainguard/python:latest",
                 confidence=0.85,
                 method="heuristic",
+                reasoning="Python image matched via heuristic rules",
             )),
         ]
 
-        write_matched_csv(output_file, pairs)
+        write_matched_yaml(output_file, pairs)
 
         # Verify file contents
         with open(output_file, "r", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            rows = list(reader)
+            data = yaml.safe_load(f)
 
-        assert len(rows) == 3  # Header + 2 data rows
-        assert rows[0] == ["alternative_image", "upstream_image", "chainguard_image",
-                          "upstream_confidence", "match_confidence", "upstream_method", "match_method"]
-        assert rows[1][0] == "nginx:latest"
-        assert rows[1][2] == "cgr.dev/chainguard/nginx-fips:latest"
-        assert rows[2][0] == "python:3.12"
-        assert rows[2][2] == "cgr.dev/chainguard/python:latest"
+        assert "metadata" in data
+        assert data["metadata"]["total_matches"] == 2
+        assert "matches" in data
+        assert len(data["matches"]) == 2
 
-    def test_write_empty_matched_csv(self, tmp_path):
-        """Test writing empty matched pairs CSV."""
-        output_file = tmp_path / "matched.csv"
+        # Check first match
+        assert data["matches"][0]["alternative_image"] == "nginx:latest"
+        assert data["matches"][0]["chainguard_image"] == "cgr.dev/chainguard/nginx-fips:latest"
+        assert data["matches"][0]["confidence"] == 0.95
+        assert data["matches"][0]["method"] == "dfc"
+
+        # Check second match (with reasoning)
+        assert data["matches"][1]["alternative_image"] == "python:3.12"
+        assert data["matches"][1]["chainguard_image"] == "cgr.dev/chainguard/python:latest"
+        assert data["matches"][1]["reasoning"] == "Python image matched via heuristic rules"
+
+    def test_write_matched_yaml_with_upstream(self, tmp_path):
+        """Test writing matched pairs with upstream info to YAML."""
+        from utils.image_matcher import MatchResult
+
+        output_file = tmp_path / "matched.yaml"
+        pairs = [
+            ("registry1.dso.mil/ironbank/python:3.12", MatchResult(
+                chainguard_image="cgr.dev/chainguard/python:latest",
+                confidence=0.95,
+                method="dfc",
+                upstream_image="python:3.12",
+                upstream_confidence=0.90,
+                upstream_method="registry_strip",
+            )),
+        ]
+
+        write_matched_yaml(output_file, pairs)
+
+        # Verify file contents
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        assert len(data["matches"]) == 1
+        match = data["matches"][0]
+        assert match["alternative_image"] == "registry1.dso.mil/ironbank/python:3.12"
+        assert "upstream" in match
+        assert match["upstream"]["image"] == "python:3.12"
+        assert match["upstream"]["confidence"] == 0.90
+        assert match["upstream"]["method"] == "registry_strip"
+
+    def test_write_empty_matched_yaml(self, tmp_path):
+        """Test writing empty matched pairs YAML."""
+        output_file = tmp_path / "matched.yaml"
         pairs = []
 
-        write_matched_csv(output_file, pairs)
+        write_matched_yaml(output_file, pairs)
 
-        # Verify only header exists
+        # Verify structure exists with empty matches
         with open(output_file, "r", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            rows = list(reader)
+            data = yaml.safe_load(f)
 
-        assert len(rows) == 1
-        assert rows[0] == ["alternative_image", "upstream_image", "chainguard_image",
-                          "upstream_confidence", "match_confidence", "upstream_method", "match_method"]
+        assert data["metadata"]["total_matches"] == 0
+        assert data["matches"] == []
 
     def test_write_unmatched_file(self, tmp_path):
         """Test writing unmatched images with issue search results to text file."""
@@ -242,8 +279,7 @@ images:
         input_file = tmp_path / "input.txt"
         input_file.write_text("nginx:latest\npython:3.12\n")
 
-        output_file = tmp_path / "matched.csv"
-        unmatched_file = tmp_path / "unmatched.txt"
+        output_file = tmp_path / "matched.yaml"
 
         # Mock matcher
         mock_matcher = MagicMock()
@@ -285,7 +321,7 @@ images:
         input_file = tmp_path / "input.txt"
         input_file.write_text("nginx:latest\ncustom-app:v1.0\n")
 
-        output_file = tmp_path / "matched.csv"
+        output_file = tmp_path / "matched.yaml"
 
         # Mock matcher
         mock_matcher = MagicMock()
@@ -328,7 +364,7 @@ images:
         input_file = tmp_path / "input.txt"
         input_file.write_text("nginx:latest\n")
 
-        output_file = tmp_path / "matched.csv"
+        output_file = tmp_path / "matched.yaml"
 
         # Mock matcher
         mock_matcher = MagicMock()
@@ -364,7 +400,7 @@ images:
         input_file = tmp_path / "input.txt"
         input_file.write_text("nginx:latest\npython:3.12\n")
 
-        output_file = tmp_path / "matched.csv"
+        output_file = tmp_path / "matched.yaml"
 
         # Mock matcher
         mock_matcher = MagicMock()

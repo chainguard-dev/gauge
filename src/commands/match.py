@@ -8,8 +8,11 @@ to their Chainguard equivalents.
 import csv
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+import yaml
 
 from utils.image_matcher import ImageMatcher, MatchResult
 from utils.issue_matcher import IssueMatchResult, search_github_issues_for_images
@@ -36,6 +39,7 @@ def match_images(
     generate_dfc_pr: bool = False,
     github_token: Optional[str] = None,
     known_registries: Optional[list[str]] = None,
+    prefer_fips: bool = False,
 ) -> tuple[list[tuple[str, MatchResult]], list[str]]:
     """
     Match alternative images to Chainguard equivalents.
@@ -57,6 +61,7 @@ def match_images(
         generate_dfc_pr: Generate DFC contribution files for high-confidence LLM matches
         github_token: GitHub token for issue search (required for issue matching)
         known_registries: Additional registries the user has credentials for
+        prefer_fips: Prefer FIPS variants of Chainguard images when available
 
     Returns:
         Tuple of (matched_pairs with MatchResult, unmatched_images)
@@ -100,12 +105,15 @@ def match_images(
 
     # Initialize matcher
     logger.info("Initializing image matcher...")
+    if prefer_fips:
+        logger.info("FIPS mode enabled - will prefer -fips variants when available")
     matcher = ImageMatcher(
         cache_dir=cache_dir,
         dfc_mappings_file=dfc_mappings_file,
         upstream_finder=upstream_finder,
         llm_matcher=llm_matcher,
         registry_checker=registry_checker,
+        prefer_fips=prefer_fips,
     )
 
     # Initialize DFC contributor if requested
@@ -183,8 +191,11 @@ def match_images(
                 unmatched_images.append(alt_image)
 
     # Write outputs
+    # Change extension to .yaml if user specified .csv (for backward compatibility)
+    if output_file.suffix.lower() == ".csv":
+        output_file = output_file.with_suffix(".yaml")
     logger.info(f"\nWriting detailed match log to {output_file}")
-    write_matched_csv(output_file, matched_pairs)
+    write_matched_yaml(output_file, matched_pairs)
 
     # Write intake file for gauge scan
     intake_file = output_file.parent / "matched-intake.csv"
@@ -355,29 +366,45 @@ def read_input_file(file_path: Path) -> list[str]:
     return images
 
 
-def write_matched_csv(file_path: Path, pairs: list[tuple[str, MatchResult]]) -> None:
-    """Write matched image pairs to CSV file with full matching metadata."""
-    with open(file_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "alternative_image",
-            "upstream_image",
-            "chainguard_image",
-            "upstream_confidence",
-            "match_confidence",
-            "upstream_method",
-            "match_method",
-        ])
-        for alt, result in pairs:
-            writer.writerow([
-                alt,
-                result.upstream_image or "",
-                result.chainguard_image,
-                f"{result.upstream_confidence:.2f}" if result.upstream_confidence is not None else "",
-                f"{result.confidence:.2f}",
-                result.upstream_method or "",
-                result.method,
-            ])
+def write_matched_yaml(file_path: Path, pairs: list[tuple[str, MatchResult]]) -> None:
+    """Write matched image pairs to YAML file with full matching metadata."""
+    # Build the output structure
+    output: dict[str, Any] = {
+        "metadata": {
+            "generated_at": datetime.now().isoformat(),
+            "total_matches": len(pairs),
+        },
+        "matches": [],
+    }
+
+    for alt, result in pairs:
+        match_entry: dict[str, Any] = {
+            "alternative_image": alt,
+            "chainguard_image": result.chainguard_image,
+            "confidence": round(result.confidence, 2),
+            "method": result.method,
+        }
+
+        # Add upstream info if available
+        if result.upstream_image:
+            match_entry["upstream"] = {
+                "image": result.upstream_image,
+                "confidence": round(result.upstream_confidence, 2) if result.upstream_confidence else None,
+                "method": result.upstream_method,
+            }
+
+        # Add LLM reasoning if available
+        if result.reasoning:
+            match_entry["reasoning"] = result.reasoning
+
+        # Add alternatives if available
+        if result.alternatives:
+            match_entry["alternatives"] = result.alternatives
+
+        output["matches"].append(match_entry)
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        yaml.dump(output, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
 def write_matched_intake(file_path: Path, pairs: list[tuple[str, MatchResult]]) -> None:

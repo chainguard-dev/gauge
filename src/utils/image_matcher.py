@@ -662,6 +662,7 @@ class ImageMatcher:
         upstream_finder: Optional[UpstreamImageFinder] = None,
         llm_matcher=None,
         registry_checker: Optional[RegistryAccessChecker] = None,
+        prefer_fips: bool = False,
     ):
         """
         Initialize image matcher coordinator.
@@ -674,15 +675,20 @@ class ImageMatcher:
             upstream_finder: Optional upstream image finder for discovering public equivalents
             llm_matcher: Optional LLM matcher for Tier 4 fuzzy matching
             registry_checker: Optional registry access checker for skipping upstream discovery
+            prefer_fips: If True, prefer -fips variants of Chainguard images when available
         """
         self.upstream_finder = upstream_finder
         self.registry_checker = registry_checker
+        self.prefer_fips = prefer_fips
 
         # Initialize tier-based matchers
         self.tier1 = Tier1DFCMatcher(cache_dir=cache_dir, dfc_mappings_file=dfc_mappings_file)
         self.tier2 = Tier2ManualMatcher(manual_mappings_file=manual_mappings_file)
         self.tier3 = Tier3HeuristicMatcher(github_token=github_token)
         self.tier4 = Tier4LLMMatcher(llm_matcher=llm_matcher, github_token=github_token) if llm_matcher else None
+
+        # Image verifier for checking FIPS variant existence
+        self.image_verifier = ImageVerificationService(github_token=github_token)
 
     def match(self, alternative_image: str) -> MatchResult:
         """
@@ -730,6 +736,11 @@ class ImageMatcher:
                     result.upstream_image = upstream_result.upstream_image
                     result.upstream_confidence = upstream_result.confidence
                     result.upstream_method = upstream_result.method
+
+                # Step 4: Try FIPS variant if prefer_fips is enabled
+                if self.prefer_fips:
+                    result = self._try_fips_variant(result)
+
                 return result
 
         # No match found
@@ -742,3 +753,45 @@ class ImageMatcher:
             upstream_confidence=upstream_result.confidence if upstream_result else None,
             upstream_method=upstream_result.method if upstream_result else None,
         )
+
+    def _try_fips_variant(self, result: MatchResult) -> MatchResult:
+        """
+        Try to find a FIPS variant of the matched Chainguard image.
+
+        If prefer_fips is enabled and the matched image doesn't already have -fips,
+        check if a -fips variant exists and use it instead.
+
+        Args:
+            result: The original match result
+
+        Returns:
+            Updated MatchResult with FIPS variant if available, otherwise original
+        """
+        if not result.chainguard_image:
+            return result
+
+        image = result.chainguard_image
+
+        # Already a FIPS image - no change needed
+        if "-fips:" in image or "-fips@" in image or image.endswith("-fips"):
+            return result
+
+        # Construct the FIPS variant
+        # e.g., cgr.dev/chainguard-private/calico-typha:latest → cgr.dev/chainguard-private/calico-typha-fips:latest
+        if ":" in image:
+            base, tag = image.rsplit(":", 1)
+            fips_image = f"{base}-fips:{tag}"
+        elif "@" in image:
+            base, digest = image.rsplit("@", 1)
+            fips_image = f"{base}-fips@{digest}"
+        else:
+            fips_image = f"{image}-fips"
+
+        # Check if FIPS variant exists
+        if self.image_verifier.verify_image_exists(fips_image):
+            logger.info(f"FIPS variant found: {image} → {fips_image}")
+            result.chainguard_image = fips_image
+        else:
+            logger.debug(f"No FIPS variant found for {image}")
+
+        return result
