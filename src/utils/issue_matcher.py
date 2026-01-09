@@ -22,6 +22,50 @@ from utils.llm_utils import db_connection, parse_json_response
 logger = logging.getLogger(__name__)
 
 
+def _extract_search_terms(image_name: str) -> list[str]:
+    """
+    Extract search terms from an image name for GitHub issue search.
+
+    Args:
+        image_name: Full image name (e.g., "alpine/jmeter:5", "docker.io/nginx:latest")
+
+    Returns:
+        List of search terms to use
+    """
+    # Remove registry prefix if present
+    name = image_name
+    if "/" in name:
+        # Handle registry/org/image or org/image patterns
+        parts = name.split("/")
+        # If first part looks like a registry (has dots or is known registry), skip it
+        if "." in parts[0] or parts[0] in ("docker", "library"):
+            parts = parts[1:]
+        name = parts[-1] if parts else name
+
+    # Remove tag
+    if ":" in name:
+        name = name.split(":")[0]
+
+    # Remove digest
+    if "@" in name:
+        name = name.split("@")[0]
+
+    # Split on common separators to get component terms
+    terms = []
+    # Add the full name first
+    if name:
+        terms.append(name)
+
+    # Also add individual components if name has separators
+    for sep in ["-", "_"]:
+        if sep in name:
+            for part in name.split(sep):
+                if part and len(part) > 2 and part not in terms:
+                    terms.append(part)
+
+    return terms
+
+
 def search_github_issues_for_images(
     unmatched_images: list[str],
     anthropic_api_key: Optional[str] = None,
@@ -35,6 +79,11 @@ def search_github_issues_for_images(
 
     This is a convenience function that initializes the GitHub client and
     IssueMatcher, then searches for all unmatched images.
+
+    Uses a hybrid approach:
+    1. Fetches recent open issues for general context
+    2. For each image, searches GitHub for issues mentioning the image name
+    3. Combines results and uses LLM to find the best match
 
     Args:
         unmatched_images: List of image names to search for
@@ -59,14 +108,36 @@ def search_github_issues_for_images(
         cache_dir=cache_dir,
         confidence_threshold=confidence_threshold,
     )
-    open_issues = github_client.get_open_issues()
-    logger.info(f"Searching {len(open_issues)} open GitHub issues for {len(unmatched_images)} unmatched images...")
+
+    # Fetch recent open issues as baseline context (reduced from 500 to 200)
+    recent_issues = github_client.get_open_issues(max_pages=2)
+    recent_issue_numbers = {issue.number for issue in recent_issues}
+    logger.info(f"Loaded {len(recent_issues)} recent open issues as baseline")
 
     issue_matches = []
     no_issue_matches = []
 
     for image in unmatched_images:
-        result = issue_matcher.match(image, open_issues)
+        # Search for issues specifically mentioning this image
+        search_terms = _extract_search_terms(image)
+        search_issues = []
+
+        for term in search_terms[:2]:  # Limit to first 2 terms to avoid too many API calls
+            try:
+                found = github_client.search_issues(term, max_results=20)
+                for issue in found:
+                    if issue.number not in recent_issue_numbers:
+                        search_issues.append(issue)
+                        recent_issue_numbers.add(issue.number)
+            except ValueError as e:
+                logger.debug(f"Search for '{term}' failed: {e}")
+
+        # Combine recent issues with search results
+        combined_issues = recent_issues + search_issues
+        if search_issues:
+            logger.debug(f"Found {len(search_issues)} additional issues for '{image}' via search")
+
+        result = issue_matcher.match(image, combined_issues)
         if result.matched_issue:
             issue_matches.append((image, result))
         else:

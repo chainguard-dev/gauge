@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
 from integrations.github_issue_search import GitHubIssue
-from utils.issue_matcher import IssueMatcher, IssueMatchResult
+from utils.issue_matcher import IssueMatcher, IssueMatchResult, _extract_search_terms
 
 
 @pytest.fixture
@@ -337,3 +337,62 @@ class TestIssueMatchResult:
 
         assert result.matched_issue is None
         assert result.confidence == 0.0
+
+
+class TestExtractSearchTerms:
+    """Test search term extraction from image names."""
+
+    def test_simple_image_name(self):
+        """Test extracting terms from simple image name."""
+        terms = _extract_search_terms("nginx:latest")
+        assert "nginx" in terms
+
+    def test_image_with_org(self):
+        """Test extracting terms from org/image format."""
+        terms = _extract_search_terms("alpine/jmeter:5")
+        assert "jmeter" in terms
+
+    def test_image_with_registry(self):
+        """Test extracting terms from registry/org/image format."""
+        terms = _extract_search_terms("docker.io/library/nginx:1.25")
+        assert "nginx" in terms
+
+    def test_image_with_private_registry(self):
+        """Test extracting terms from private registry image."""
+        terms = _extract_search_terms("gcr.io/myproject/myapp:v1")
+        assert "myapp" in terms
+
+    def test_image_with_hyphen(self):
+        """Test extracting terms from hyphenated image name."""
+        terms = _extract_search_terms("kube-state-metrics:v2.0")
+        assert "kube-state-metrics" in terms
+        assert "kube" in terms
+        assert "state" in terms
+        assert "metrics" in terms
+
+    def test_image_with_underscore(self):
+        """Test extracting terms from underscore-separated image name."""
+        terms = _extract_search_terms("fluent_bit:latest")
+        assert "fluent_bit" in terms
+        assert "fluent" in terms
+        assert "bit" in terms
+
+    def test_image_with_digest(self):
+        """Test extracting terms from image with digest."""
+        terms = _extract_search_terms("nginx@sha256:abc123")
+        assert "nginx" in terms
+
+    def test_short_components_filtered(self):
+        """Test that very short components are filtered out."""
+        terms = _extract_search_terms("go-app:v1")
+        assert "go-app" in terms
+        assert "app" in terms
+        # "go" should be filtered out as it's only 2 chars
+        assert "go" not in terms
+
+    def test_ghcr_registry(self):
+        """Test extracting terms from ghcr.io image."""
+        terms = _extract_search_terms("ghcr.io/external-secrets/external-secrets:v0.9.0")
+        assert "external-secrets" in terms
+        assert "external" in terms
+        assert "secrets" in terms
