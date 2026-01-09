@@ -159,9 +159,18 @@ class DirectMatchStrategy(CandidateStrategy):
 class PathFlatteningStrategy(CandidateStrategy):
     """Strategy for flattening complex image paths."""
 
+    # Organizational namespaces that should be skipped when building hyphenated names
+    # These are registry-specific prefixes, not meaningful project names
+    SKIP_PREFIXES = {
+        "library",      # Docker Hub official images
+        "opensource",   # Iron Bank organizational prefix
+        "ironbank",     # Iron Bank namespace
+        "_",            # Docker Hub internal
+    }
+
     def generate(self, base_name: str, full_image: str, has_fips: bool) -> list[str]:
         """Generate candidates from complex paths."""
-        # Rule 8: Flatten complex paths (e.g., kube-state-metrics/kube-state-metrics → kube-state-metrics)
+        # Rule 8: Flatten complex paths (e.g., calico/node → calico-node)
         if "/" not in full_image:
             return []
 
@@ -180,12 +189,16 @@ class PathFlatteningStrategy(CandidateStrategy):
 
         # Try last two components joined with hyphen
         # (e.g., ghcr.io/kyverno/background-controller → kyverno-background-controller)
+        # Skip organizational prefixes that don't add meaningful context
         if len(parts) >= 2:
-            second_last = parts[-2]
-            hyphenated = f"{second_last}-{last_component}"
-            if has_fips:
-                candidates.append(f"{CHAINGUARD_PRIVATE_REGISTRY}/{hyphenated}-fips:latest")
-            candidates.append(f"{CHAINGUARD_PRIVATE_REGISTRY}/{hyphenated}:latest")
+            second_last = parts[-2].lower()
+
+            # Skip organizational namespaces - they don't represent project names
+            if second_last not in self.SKIP_PREFIXES:
+                hyphenated = f"{second_last}-{last_component}"
+                if has_fips:
+                    candidates.append(f"{CHAINGUARD_PRIVATE_REGISTRY}/{hyphenated}-fips:latest")
+                candidates.append(f"{CHAINGUARD_PRIVATE_REGISTRY}/{hyphenated}:latest")
 
         return candidates
 
@@ -475,8 +488,8 @@ class Tier3HeuristicMatcher(TierMatcher):
         self.strategies = [
             BaseOSStrategy(),  # Check for base OS images first
             BitnamiStrategy(),
+            PathFlatteningStrategy(),  # Try path-based matches before direct (e.g., calico/node → calico-node)
             DirectMatchStrategy(),
-            PathFlatteningStrategy(),
             NameVariationStrategy(),
         ]
 
