@@ -333,25 +333,39 @@ All matching options available in `gauge match` (see below) can also be used wit
 To preview matches without running a full scan, use the `gauge match` command:
 
 ```bash
-# Match images and save to CSV
-gauge match --input images.txt -o matched.csv
+# Match images and save to YAML
+gauge match --input images.txt -o matched.yaml
 
 # With minimum confidence threshold
-gauge match --input images.txt -o matched.csv --min-confidence 0.85
+gauge match --input images.txt -o matched.yaml --min-confidence 0.85
+
+# Prefer FIPS variants of Chainguard images when available
+gauge match --input images.txt -o matched.yaml --with-fips
 
 # Interactive mode for low-confidence matches
-gauge match --input images.txt -o matched.csv --interactive
+gauge match --input images.txt -o matched.yaml --interactive
 
 # Use offline DFC mappings
-gauge match --input images.txt -o matched.csv --dfc-mappings-file local-mappings.yaml
+gauge match --input images.txt -o matched.yaml --dfc-mappings-file local-mappings.yaml
 
 # With GitHub token for searching existing image requests
-gauge match --input images.txt -o matched.csv --github-token $GITHUB_TOKEN
+gauge match --input images.txt -o matched.yaml --github-token $GITHUB_TOKEN
 ```
 
 The `match` command outputs:
-- `matched.csv` - Successfully matched image pairs with full metadata (ready for scanning)
+- `matched.yaml` - Successfully matched image pairs with full metadata in YAML format (includes timestamps, confidence scores, methods, reasoning, and alternatives)
+- `matched-intake.csv` - Simple two-column CSV ready for scanning with `gauge`
 - `unmatched.txt` - Images that couldn't be matched, with GitHub issue search results showing any existing requests in chainguard-dev/image-requests
+
+#### FIPS Variant Preference
+
+When `--with-fips` is specified, the matcher will check if a FIPS variant exists for each matched Chainguard image and prefer it over the standard variant:
+
+```bash
+gauge match --input images.txt -o matched.yaml --with-fips
+```
+
+For example, if `nginx:latest` would normally match to `cgr.dev/chainguard/nginx:latest`, with `--with-fips` it will instead match to `cgr.dev/chainguard/nginx-fips:latest` (if that image exists). This is useful for organizations that require FIPS-validated cryptography.
 
 ### Upstream Image Discovery (For Private/Internal Images)
 
@@ -359,16 +373,16 @@ The `match` command outputs:
 
 ```bash
 # Upstream discovery is enabled by default - no flag needed
-gauge match --input images.txt -o matched.csv
+gauge match --input images.txt -o matched.yaml
 
 # Skip upstream discovery if not needed (faster for public images)
-gauge match --input images.txt -o matched.csv --skip-public-repo-search
+gauge match --input images.txt -o matched.yaml --skip-public-repo-search
 
 # With custom confidence thresholds
-gauge match --input images.txt -o matched.csv --upstream-confidence 0.8
+gauge match --input images.txt -o matched.yaml --upstream-confidence 0.8
 
 # Use manual upstream mappings for custom overrides
-gauge match --input images.txt -o matched.csv --upstream-mappings-file config/upstream_mappings.yaml
+gauge match --input images.txt -o matched.yaml --upstream-mappings-file config/upstream_mappings.yaml
 ```
 
 #### Known Registries (Skip Upstream Discovery)
@@ -407,12 +421,22 @@ Both the config file and CLI flag can be used together - registries from both so
    - **Common Registries** (80%) - Checks docker.io, quay.io, ghcr.io
    - **Base Extraction** (70%) - Extracts base image: `internal-python-app` → `python:latest`
 4. **Chainguard Matching**: Try all 4 tiers with upstream image (or original if no upstream found)
-5. Output: Full audit trail in `matched.csv` showing both upstream and Chainguard matches
+5. Output: Full audit trail in `matched.yaml` showing both upstream and Chainguard matches
 
-**Output format with upstream discovery:**
-```csv
-alternative_image,upstream_image,chainguard_image,upstream_confidence,match_confidence,upstream_method,match_method
-mycompany.io/python:3.12,python:3.12,cgr.dev/chainguard/python:latest,0.90,0.95,registry_strip,dfc
+**Output format with upstream discovery** (in `matched.yaml`):
+```yaml
+metadata:
+  generated_at: "2025-01-09T10:30:00"
+  total_matches: 1
+matches:
+  - alternative_image: mycompany.io/python:3.12
+    chainguard_image: cgr.dev/chainguard/python:latest
+    confidence: 0.95
+    method: dfc
+    upstream:
+      image: python:3.12
+      confidence: 0.90
+      method: registry_strip
 ```
 
 **Manual upstream mappings** (`config/upstream_mappings.yaml`):
@@ -440,22 +464,22 @@ mycompany.io/python:3.12,python:3.12,cgr.dev/chainguard/python:latest,0.90,0.95,
 
 ```bash
 # LLM matching is enabled by default
-gauge match --input images.txt -o matched.csv
+gauge match --input images.txt -o matched.yaml
 
 # Disable LLM matching (use only Tiers 1-3)
-gauge match --input images.txt -o matched.csv --disable-llm-matching
+gauge match --input images.txt -o matched.yaml --disable-llm-matching
 
 # Use specific Claude model
-gauge match --input images.txt -o matched.csv --llm-model claude-3-opus-20240229
+gauge match --input images.txt -o matched.yaml --llm-model claude-3-opus-20240229
 
 # Adjust confidence threshold
-gauge match --input images.txt -o matched.csv --llm-confidence-threshold 0.8
+gauge match --input images.txt -o matched.yaml --llm-confidence-threshold 0.8
 
 # Generate DFC contribution files for high-confidence matches
-gauge match --input images.txt -o matched.csv --generate-dfc-pr
+gauge match --input images.txt -o matched.yaml --generate-dfc-pr
 
 # Disable auto-populating manual mappings file with new matches
-gauge match --input images.txt -o matched.csv --disable-mapping-auto-population
+gauge match --input images.txt -o matched.yaml --disable-mapping-auto-population
 ```
 
 **Configuration:**
@@ -482,7 +506,7 @@ When `--generate-dfc-pr` is enabled, Gauge generates two files for contributing 
 - `dfc-suggestions.patch` - Git diff ready for PR creation
 
 ```bash
-gauge match --input images.txt -o matched.csv --generate-dfc-pr
+gauge match --input images.txt -o matched.yaml --generate-dfc-pr
 
 # Generated files include successful heuristic and LLM matches:
 # - dfc-suggestions.yaml (mappings to review)
