@@ -13,9 +13,12 @@ from commands.match import (
     read_input_file,
     write_matched_yaml,
     write_unmatched_file,
+    write_summary_csv,
     handle_interactive_match,
 )
 from utils.image_matcher import MatchResult
+from utils.issue_matcher import IssueMatchResult
+from integrations.github_issue_search import GitHubIssue
 
 
 class TestReadInputFile:
@@ -257,6 +260,125 @@ class TestWriteOutputFiles:
         assert "NO MATCHING ISSUES FOUND" in content
         assert "internal-tool:latest" in content
         assert "Summary: 1 with existing issues, 1 with no issues (total: 2)" in content
+
+    def test_write_summary_csv(self, tmp_path):
+        """Test writing summary CSV with all images."""
+        output_file = tmp_path / "summary.csv"
+
+        # Input images
+        all_images = [
+            "nginx:latest",
+            "registry1.dso.mil/ironbank/python:3.12",
+            "custom-app:v1.0",
+        ]
+
+        # Matched pairs
+        matched_pairs = [
+            ("nginx:latest", MatchResult(
+                chainguard_image="cgr.dev/chainguard/nginx-fips:latest",
+                confidence=0.95,
+                method="dfc",
+            )),
+            ("registry1.dso.mil/ironbank/python:3.12", MatchResult(
+                chainguard_image="cgr.dev/chainguard/python:latest",
+                confidence=0.85,
+                method="heuristic",
+                upstream_image="python:3.12",
+                upstream_confidence=0.90,
+                upstream_method="registry_strip",
+            )),
+        ]
+
+        # Unmatched with issue
+        mock_issue = GitHubIssue(
+            number=123,
+            title="Request: custom-app",
+            body="Please add custom-app",
+            url="https://github.com/chainguard-dev/image-requests/issues/123",
+            labels=["image-request"],
+            state="open",
+            created_at="2024-01-01T00:00:00Z",
+        )
+        issue_match_result = IssueMatchResult(
+            image_name="custom-app:v1.0",
+            matched_issue=mock_issue,
+            confidence=0.95,
+            reasoning="Direct match",
+        )
+        issue_matches = [("custom-app:v1.0", issue_match_result)]
+        no_issue_matches = []
+
+        write_summary_csv(
+            file_path=output_file,
+            all_images=all_images,
+            matched_pairs=matched_pairs,
+            issue_matches=issue_matches,
+            no_issue_matches=no_issue_matches,
+            prefer_fips=True,
+        )
+
+        # Verify file contents
+        with open(output_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        assert len(rows) == 3
+
+        # Check first row (matched with FIPS)
+        assert rows[0]["customer image"] == "nginx:latest"
+        assert rows[0]["original image registry"] == "docker.io"
+        assert rows[0]["alternative image registry"] == ""
+        assert rows[0]["existing image?"] == "Yes"
+        assert rows[0]["FIPS available?"] == "Yes"  # nginx-fips:latest has -fips
+        assert rows[0]["chainguard image"] == "cgr.dev/chainguard/nginx-fips:latest"
+        assert rows[0]["github issue"] == ""
+
+        # Check second row (matched with upstream)
+        assert rows[1]["customer image"] == "registry1.dso.mil/ironbank/python:3.12"
+        assert rows[1]["original image registry"] == "registry1.dso.mil"
+        assert rows[1]["alternative image registry"] == "docker.io"  # upstream is python:3.12
+        assert rows[1]["existing image?"] == "Yes"
+        assert rows[1]["FIPS available?"] == "No"  # python:latest doesn't have -fips
+        assert rows[1]["chainguard image"] == "cgr.dev/chainguard/python:latest"
+        assert rows[1]["github issue"] == ""
+
+        # Check third row (unmatched with issue)
+        assert rows[2]["customer image"] == "custom-app:v1.0"
+        assert rows[2]["original image registry"] == "docker.io"
+        assert rows[2]["existing image?"] == "No"
+        assert rows[2]["FIPS available?"] == ""  # Empty for unmatched
+        assert rows[2]["chainguard image"] == ""
+        assert rows[2]["github issue"] == "https://github.com/chainguard-dev/image-requests/issues/123"
+
+    def test_write_summary_csv_without_fips(self, tmp_path):
+        """Test writing summary CSV without FIPS mode enabled."""
+        output_file = tmp_path / "summary.csv"
+
+        all_images = ["nginx:latest"]
+        matched_pairs = [
+            ("nginx:latest", MatchResult(
+                chainguard_image="cgr.dev/chainguard/nginx:latest",
+                confidence=0.95,
+                method="dfc",
+            )),
+        ]
+
+        write_summary_csv(
+            file_path=output_file,
+            all_images=all_images,
+            matched_pairs=matched_pairs,
+            issue_matches=[],
+            no_issue_matches=[],
+            prefer_fips=False,
+        )
+
+        with open(output_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        assert len(rows) == 1
+        # FIPS column should be empty when prefer_fips=False
+        assert rows[0]["FIPS available?"] == ""
 
 
 class TestMatchImages:

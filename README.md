@@ -355,7 +355,29 @@ gauge match --input images.txt -o matched.yaml --github-token $GITHUB_TOKEN
 The `match` command outputs:
 - `matched.yaml` - Successfully matched image pairs with full metadata in YAML format (includes timestamps, confidence scores, methods, reasoning, and alternatives)
 - `matched-intake.csv` - Simple two-column CSV ready for scanning with `gauge`
-- `unmatched.txt` - Images that couldn't be matched, with GitHub issue search results showing any existing requests in chainguard-dev/image-requests
+- `{customer}_gauge_summary.csv` - Comprehensive summary of all images (both matched and unmatched) with registry info, FIPS availability, and GitHub issue links
+
+#### Summary CSV Format
+
+The summary CSV (`{customer}_gauge_summary.csv`) provides a complete overview of all images in the intake list:
+
+| Column | Description |
+|--------|-------------|
+| customer image | The original input image |
+| original image registry | Registry of the input image (e.g., `docker.io`, `registry1.dso.mil`) |
+| alternative image registry | Discovered upstream/public registry (if image was from private registry) |
+| existing image? | `Yes` if a Chainguard match was found, `No` otherwise |
+| FIPS available? | `Yes`/`No` for FIPS variant availability (only populated with `--with-fips`) |
+| chainguard image | The matched Chainguard image (empty if no match) |
+| github issue | Link to existing image request issue (for unmatched images) |
+| notes | Empty column for user annotations |
+
+Use `--customer` to customize the filename prefix:
+
+```bash
+gauge match --input images.txt -o output/matched.yaml --customer "Acme Corp"
+# Outputs: output/acme_corp_gauge_summary.csv
+```
 
 #### FIPS Variant Preference
 

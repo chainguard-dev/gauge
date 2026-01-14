@@ -81,7 +81,7 @@ def search_github_issues_for_images(
     IssueMatcher, then searches for all unmatched images.
 
     Uses a hybrid approach:
-    1. Fetches recent open issues for general context
+    1. Fetches recent issues (open and closed) for general context
     2. For each image, searches GitHub for issues mentioning the image name
     3. Combines results and uses LLM to find the best match
 
@@ -109,10 +109,10 @@ def search_github_issues_for_images(
         confidence_threshold=confidence_threshold,
     )
 
-    # Fetch recent open issues as baseline context (reduced from 500 to 200)
-    recent_issues = github_client.get_open_issues(max_pages=2)
+    # Fetch recent issues (open and closed) as baseline context
+    recent_issues = github_client.get_issues(max_pages=2, state="all")
     recent_issue_numbers = {issue.number for issue in recent_issues}
-    logger.info(f"Loaded {len(recent_issues)} recent open issues as baseline")
+    logger.info(f"Loaded {len(recent_issues)} recent issues as baseline")
 
     issue_matches = []
     no_issue_matches = []
@@ -399,7 +399,7 @@ class IssueMatcher:
                 f"  Description: {body_preview}..."
             )
 
-        issues_str = "\n\n".join(issues_text) if issues_text else "(no open issues)"
+        issues_str = "\n\n".join(issues_text) if issues_text else "(no matching issues)"
 
         prompt = f"""You are an expert at matching container images to GitHub issue requests.
 
@@ -476,7 +476,7 @@ Respond with ONLY the JSON output, no additional text."""
                 image_name=image_name,
                 matched_issue=None,
                 confidence=0.0,
-                reasoning="No open issues to search",
+                reasoning="No issues to search",
             )
             self._cache_result(result)
             return result

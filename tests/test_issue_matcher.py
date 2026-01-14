@@ -159,7 +159,7 @@ class TestIssueMatcher:
 
         assert result.matched_issue is None
         assert result.confidence == 0.0
-        assert "no open issues" in result.reasoning.lower()
+        assert "no issues" in result.reasoning.lower()
 
     def test_issue_match_no_api_key(self, tmp_path):
         """Test that matcher handles missing API key gracefully."""

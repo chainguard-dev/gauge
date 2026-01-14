@@ -335,6 +335,11 @@ gauge/
 - YAML and patch file creation
 - High-confidence match extraction
 
+**`filename_utils.py`** - Filename utilities
+- Customer name sanitization for filenames
+- Registry extraction from image references
+- Used by match command for summary CSV generation
+
 **`image_matcher.py`** - Image matching orchestration
 - 4-tier matching strategy coordination
 - Confidence scoring and method tracking

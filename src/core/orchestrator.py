@@ -12,13 +12,15 @@ from typing import Optional
 from common import OUTPUT_CONFIGS, GitHubAuthValidator
 from core.cache import ScanCache
 from core.models import ImagePair
-from utils.issue_matcher import search_github_issues_for_images, log_issue_search_results
+from utils.issue_matcher import search_github_issues_for_images, log_issue_search_results, IssueMatchResult
+from commands.match import write_summary_csv
 from core.scanner import VulnerabilityScanner
 from integrations.kev_catalog import KEVCatalog
 from outputs.config import HTMLGeneratorConfig, XLSXGeneratorConfig
 from outputs.html_generator import HTMLGenerator
 from outputs.xlsx_generator import XLSXGenerator
 from utils.docker_utils import DockerClient
+from utils.filename_utils import sanitize_customer_name
 from utils.logging_helpers import log_error_section, log_warning_section
 
 # Read version from src/__init__.py (single source of truth)
@@ -126,7 +128,7 @@ class GaugeOrchestrator:
             sys.exit(1)
 
         # Sanitize customer name
-        safe_customer_name = self._sanitize_customer_name(self.args.customer_name)
+        safe_customer_name = sanitize_customer_name(self.args.customer_name)
 
         # Generate reports
         output_files = self._generate_reports(safe_customer_name, output_types)
@@ -162,15 +164,6 @@ class GaugeOrchestrator:
         if not requested_types:
             raise ValueError("At least one output type must be specified")
         return requested_types
-
-    def _sanitize_customer_name(self, name: str) -> str:
-        """Sanitize customer name for use in filenames."""
-        import re
-        safe_name = name.replace('&', '').replace('.', '')
-        safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in safe_name)
-        safe_name = safe_name.replace(' ', '_').lower()
-        safe_name = re.sub(r'_+', '_', safe_name)
-        return safe_name
 
     def _initialize_components(self):
         """Initialize Docker client, cache, and KEV catalog."""
@@ -376,6 +369,7 @@ class GaugeOrchestrator:
     def _auto_match_images(self, images: list[str], matcher) -> tuple[list[ImagePair], list[str]]:
         """Auto-match alternative images to Chainguard equivalents."""
         from utils.dfc_contributor import DFCContributor
+        from utils.image_matcher import MatchResult
         from utils.manual_mapping_populator import ManualMappingPopulator
         dfc_contributor = DFCContributor(output_dir=Path("output")) if self.args.generate_dfc_pr else None
         if dfc_contributor:
@@ -384,12 +378,14 @@ class GaugeOrchestrator:
         if mapping_populator:
             logger.debug("Auto-population of manual mappings enabled (use --disable-mapping-auto-population to turn off)")
         pairs, unmatched = [], []
+        matched_pairs: list[tuple[str, MatchResult]] = []  # For summary CSV
         for alt_image in images:
             result = matcher.match(alt_image)
             if result.chainguard_image and result.confidence >= self.args.min_confidence:
                 upstream_info = f" (via upstream: {result.upstream_image})" if result.upstream_image else ""
                 logger.info(f"✓ Matched: {alt_image} → {result.chainguard_image} (confidence: {result.confidence:.0%}, method: {result.method}){upstream_info}")
                 pairs.append(ImagePair(result.chainguard_image, alt_image, upstream_image=result.upstream_image))
+                matched_pairs.append((alt_image, result))
                 if dfc_contributor and result.method in ["heuristic", "llm"]:
                     dfc_contributor.add_match(alt_image, result)
                 if mapping_populator and result.method in ["heuristic", "llm"]:
@@ -407,12 +403,14 @@ class GaugeOrchestrator:
                 logger.info("\nDFC contribution files generated:")
                 for file_type, file_path in dfc_files.items():
                     logger.info(f"  - {file_type}: {file_path}")
+
+        # Search GitHub issues for unmatched images and generate summary CSV
+        issue_matches: list[tuple[str, IssueMatchResult]] = []
+        no_issue_matches: list[str] = []
         if unmatched:
             unmatched_list = "\n".join(f"  - {img}" for img in unmatched)
             logger.warning(f"\n{len(unmatched)} images could not be auto-matched:\n{unmatched_list}\n")
-
-            # Search GitHub issues for unmatched images
-            self._search_github_issues_for_unmatched(unmatched)
+            issue_matches, no_issue_matches = self._search_github_issues_for_unmatched(unmatched)
 
         # Display successful matches summary
         if pairs:
@@ -421,10 +419,20 @@ class GaugeOrchestrator:
                 for pair in pairs
             )
             logger.info(f"\nSuccessful matches:\n{matches_list}")
+
+        # Generate summary CSV
+        self._generate_summary_csv(images, matched_pairs, issue_matches, no_issue_matches)
+
         return pairs, unmatched
 
-    def _search_github_issues_for_unmatched(self, unmatched: list[str]) -> None:
-        """Search GitHub issues for unmatched images."""
+    def _search_github_issues_for_unmatched(
+        self, unmatched: list[str]
+    ) -> tuple[list[tuple[str, IssueMatchResult]], list[str]]:
+        """Search GitHub issues for unmatched images.
+
+        Returns:
+            Tuple of (issue_matches, no_issue_matches). Returns empty lists on error.
+        """
         try:
             issue_matches, no_issue_matches = search_github_issues_for_images(
                 unmatched_images=unmatched,
@@ -435,11 +443,43 @@ class GaugeOrchestrator:
                 github_token=getattr(self.args, 'github_token', None),
             )
             log_issue_search_results(issue_matches, no_issue_matches)
+            return issue_matches, no_issue_matches
         except ValueError as e:
             # GitHub token not available - skip issue search silently
             logger.debug(f"GitHub issue search skipped: {e}")
+            return [], unmatched
         except Exception as e:
             logger.warning(f"GitHub issue search failed: {e}")
+            return [], unmatched
+
+    def _generate_summary_csv(
+        self,
+        all_images: list[str],
+        matched_pairs: list,
+        issue_matches: list,
+        no_issue_matches: list[str],
+    ) -> None:
+        """Generate summary CSV for all input images."""
+        # Ensure output directory exists
+        self.args.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate the summary CSV filename
+        safe_customer_name = sanitize_customer_name(self.args.customer_name)
+        summary_csv_path = self.args.output_dir / f"{safe_customer_name}_gauge_summary.csv"
+
+        # Check if FIPS mode is enabled
+        prefer_fips = getattr(self.args, 'with_fips', False)
+
+        # Write the summary CSV
+        write_summary_csv(
+            file_path=summary_csv_path,
+            all_images=all_images,
+            matched_pairs=matched_pairs,
+            issue_matches=issue_matches,
+            no_issue_matches=no_issue_matches,
+            prefer_fips=prefer_fips,
+        )
+        logger.info(f"Summary CSV written to: {summary_csv_path}")
 
     def _execute_scans(self) -> list:
         """Execute scans with checkpoint/resume support."""

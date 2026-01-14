@@ -112,16 +112,19 @@ class GitHubIssueSearchClient:
             "Authorization": f"token {self.token}",
         }
 
-    def get_open_issues(self, max_pages: int = 5, per_page: int = 100) -> list[GitHubIssue]:
+    def get_issues(
+        self, max_pages: int = 5, per_page: int = 100, state: str = "all"
+    ) -> list[GitHubIssue]:
         """
-        Fetch all open issues from the image-requests repository.
+        Fetch issues from the image-requests repository.
 
         Args:
             max_pages: Maximum number of pages to fetch (default: 5, i.e., 500 issues)
             per_page: Number of issues per page (default: 100, max allowed by GitHub)
+            state: Issue state filter - "open", "closed", or "all" (default: "all")
 
         Returns:
-            List of GitHubIssue objects for open issues
+            List of GitHubIssue objects
 
         Raises:
             ValueError: If API request fails
@@ -131,7 +134,7 @@ class GitHubIssueSearchClient:
 
         for page in range(1, max_pages + 1):
             params = {
-                "state": "open",
+                "state": state,
                 "per_page": per_page,
                 "page": page,
             }
@@ -197,16 +200,20 @@ class GitHubIssueSearchClient:
             except requests.RequestException as e:
                 raise ValueError(f"Failed to fetch issues from GitHub: {e}")
 
-        logger.info(f"Loaded {len(all_issues)} open issues from {IMAGE_REQUESTS_REPO}")
+        state_desc = "all" if state == "all" else state
+        logger.info(f"Loaded {len(all_issues)} {state_desc} issues from {IMAGE_REQUESTS_REPO}")
         return all_issues
 
-    def search_issues(self, query: str, max_results: int = 30) -> list[GitHubIssue]:
+    def search_issues(
+        self, query: str, max_results: int = 30, state: str = "all"
+    ) -> list[GitHubIssue]:
         """
         Search issues using GitHub search API.
 
         Args:
             query: Search query string
             max_results: Maximum number of results to return
+            state: Issue state filter - "open", "closed", or "all" (default: "all")
 
         Returns:
             List of matching GitHubIssue objects
@@ -215,8 +222,9 @@ class GitHubIssueSearchClient:
             ValueError: If API request fails
         """
         url = f"{GITHUB_API_BASE}/search/issues"
+        state_filter = f"is:{state}" if state in ("open", "closed") else ""
         params = {
-            "q": f"repo:{IMAGE_REQUESTS_REPO} is:issue is:open {query}",
+            "q": f"repo:{IMAGE_REQUESTS_REPO} is:issue {state_filter} {query}".strip(),
             "per_page": min(max_results, 100),
         }
 

@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 import yaml
 
+from utils.filename_utils import extract_registry_from_image, sanitize_customer_name
 from utils.image_matcher import ImageMatcher, MatchResult
 from utils.issue_matcher import IssueMatchResult, search_github_issues_for_images
 from utils.registry_access import RegistryAccessChecker
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 def match_images(
     input_file: Path,
     output_file: Path,
+    output_dir: Optional[Path] = None,
     min_confidence: float = 0.7,
     interactive: bool = False,
     dfc_mappings_file: Optional[Path] = None,
@@ -40,6 +42,7 @@ def match_images(
     github_token: Optional[str] = None,
     known_registries: Optional[list[str]] = None,
     prefer_fips: bool = False,
+    customer_name: str = "Customer",
 ) -> tuple[list[tuple[str, MatchResult]], list[str]]:
     """
     Match alternative images to Chainguard equivalents.
@@ -47,6 +50,7 @@ def match_images(
     Args:
         input_file: Input file with alternative images (one per line or CSV)
         output_file: Output CSV file with matched pairs
+        output_dir: Output directory for summary CSV (defaults to output_file's parent)
         min_confidence: Minimum confidence threshold (0.0 - 1.0)
         interactive: Enable interactive mode for low-confidence matches
         dfc_mappings_file: Optional local DFC mappings file
@@ -62,6 +66,7 @@ def match_images(
         github_token: GitHub token for issue search (required for issue matching)
         known_registries: Additional registries the user has credentials for
         prefer_fips: Prefer FIPS variants of Chainguard images when available
+        customer_name: Customer name for output filenames
 
     Returns:
         Tuple of (matched_pairs with MatchResult, unmatched_images)
@@ -234,10 +239,19 @@ def match_images(
                 images_list = "\n".join(f"  - {image}" for image in no_issue_matches)
                 logger.info(f"\nNo matching issues found for {len(no_issue_matches)} images:\n{images_list}")
 
-            # Write unmatched file with issue search results
-            unmatched_file = output_file.parent / "unmatched.txt"
-            write_unmatched_file(unmatched_file, issue_matches, no_issue_matches)
-            logger.info(f"\nUnmatched images written to {unmatched_file}")
+            # Write summary CSV with all images
+            safe_customer_name = sanitize_customer_name(customer_name)
+            summary_dir = output_dir if output_dir else output_file.parent
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            summary_file = summary_dir / f"{safe_customer_name}_gauge_summary.csv"
+            write_summary_csv(
+                file_path=summary_file,
+                all_images=alternative_images,
+                matched_pairs=matched_pairs,
+                issue_matches=issue_matches,
+                no_issue_matches=no_issue_matches,
+                prefer_fips=prefer_fips,
+            )
 
         except ValueError as e:
             logger.error(f"GitHub authentication required for issue search: {e}")
@@ -457,6 +471,99 @@ def write_unmatched_file(
         f.write("=" * 80 + "\n")
         f.write(f"Summary: {len(issue_matches)} with existing issues, {len(no_issue_matches)} with no issues (total: {total})\n")
         f.write("=" * 80 + "\n")
+
+
+def write_summary_csv(
+    file_path: Path,
+    all_images: list[str],
+    matched_pairs: list[tuple[str, MatchResult]],
+    issue_matches: list[tuple[str, IssueMatchResult]],
+    no_issue_matches: list[str],
+    prefer_fips: bool,
+) -> None:
+    """
+    Write comprehensive summary CSV with all images from intake list.
+
+    This CSV provides a complete overview of all images processed, including:
+    - Registry information (original and discovered upstream)
+    - Match status (whether a Chainguard equivalent was found)
+    - FIPS availability (if --with-fips was used)
+    - GitHub issue links for unmatched images
+    - Empty notes column for user annotations
+
+    Args:
+        file_path: Output CSV file path
+        all_images: Complete list of input images (preserves original order)
+        matched_pairs: List of (image, MatchResult) for successfully matched images
+        issue_matches: List of (image, IssueMatchResult) for unmatched images with GitHub issues
+        no_issue_matches: List of unmatched images with no GitHub issues
+        prefer_fips: Whether FIPS mode was enabled (determines if FIPS column is populated)
+    """
+    # Build lookup dicts for efficient access
+    matched_lookup: dict[str, MatchResult] = {img: result for img, result in matched_pairs}
+    issue_lookup: dict[str, IssueMatchResult] = {img: result for img, result in issue_matches}
+
+    # CSV headers
+    headers = [
+        "customer image",
+        "original image registry",
+        "alternative image registry",
+        "existing image?",
+        "FIPS available?",
+        "chainguard image",
+        "github issue",
+        "notes",
+    ]
+
+    with open(file_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+
+        for image in all_images:
+            # Extract original registry
+            original_registry = extract_registry_from_image(image)
+
+            # Check if matched
+            match_result = matched_lookup.get(image)
+            is_matched = match_result is not None
+
+            # Get upstream registry if available
+            alternative_registry = ""
+            if match_result and match_result.upstream_image:
+                alternative_registry = extract_registry_from_image(match_result.upstream_image)
+
+            # Determine FIPS availability (only for matched images when --with-fips is used)
+            fips_available = ""
+            if prefer_fips and is_matched and match_result.chainguard_image:
+                # Check if the matched image already has -fips suffix
+                if "-fips:" in match_result.chainguard_image or "-fips@" in match_result.chainguard_image:
+                    fips_available = "Yes"
+                else:
+                    fips_available = "No"
+
+            # Get Chainguard image
+            chainguard_image = match_result.chainguard_image if match_result else ""
+
+            # Get GitHub issue URL for unmatched images
+            github_issue = ""
+            if not is_matched:
+                issue_result = issue_lookup.get(image)
+                if issue_result and issue_result.matched_issue:
+                    github_issue = issue_result.matched_issue.url
+
+            # Write row
+            writer.writerow([
+                image,                              # customer image
+                original_registry,                  # original image registry
+                alternative_registry,               # alternative image registry
+                "Yes" if is_matched else "No",      # existing image?
+                fips_available,                     # FIPS available?
+                chainguard_image,                   # chainguard image
+                github_issue,                       # github issue
+                "",                                 # notes (empty for user)
+            ])
+
+    logger.info(f"Summary CSV written to {file_path}")
 
 
 def handle_interactive_match(alt_image: str, result: MatchResult) -> Optional[tuple[str, str]]:

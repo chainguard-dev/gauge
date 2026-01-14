@@ -79,10 +79,10 @@ class TestGitHubIssueSearchClientAuth:
 
 
 class TestGitHubIssueSearchClientFetch:
-    """Tests for GitHubIssueSearchClient.get_open_issues method."""
+    """Tests for GitHubIssueSearchClient.get_issues method."""
 
     @patch("requests.get")
-    def test_get_open_issues_success(self, mock_get):
+    def test_get_issues_success(self, mock_get):
         """Test successful fetching of open issues."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -110,7 +110,7 @@ class TestGitHubIssueSearchClientFetch:
         mock_get.return_value = mock_response
 
         client = GitHubIssueSearchClient(github_token="test_token")
-        issues = client.get_open_issues(max_pages=1)
+        issues = client.get_issues(max_pages=1)
 
         assert len(issues) == 2
         assert issues[0].number == 1
@@ -118,7 +118,7 @@ class TestGitHubIssueSearchClientFetch:
         assert issues[1].number == 2
 
     @patch("requests.get")
-    def test_get_open_issues_skips_pull_requests(self, mock_get):
+    def test_get_issues_skips_pull_requests(self, mock_get):
         """Test that pull requests are skipped when fetching issues."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -147,13 +147,13 @@ class TestGitHubIssueSearchClientFetch:
         mock_get.return_value = mock_response
 
         client = GitHubIssueSearchClient(github_token="test_token")
-        issues = client.get_open_issues(max_pages=1)
+        issues = client.get_issues(max_pages=1)
 
         assert len(issues) == 1
         assert issues[0].number == 1
 
     @patch("requests.get")
-    def test_get_open_issues_handles_empty_body(self, mock_get):
+    def test_get_issues_handles_empty_body(self, mock_get):
         """Test handling of issues with null/empty body."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -172,13 +172,13 @@ class TestGitHubIssueSearchClientFetch:
         mock_get.return_value = mock_response
 
         client = GitHubIssueSearchClient(github_token="test_token")
-        issues = client.get_open_issues(max_pages=1)
+        issues = client.get_issues(max_pages=1)
 
         assert len(issues) == 1
         assert issues[0].body == ""
 
     @patch("requests.get")
-    def test_get_open_issues_rate_limit_error(self, mock_get):
+    def test_get_issues_rate_limit_error(self, mock_get):
         """Test handling of rate limit errors."""
         mock_response = MagicMock()
         mock_response.status_code = 403
@@ -192,12 +192,12 @@ class TestGitHubIssueSearchClientFetch:
         client = GitHubIssueSearchClient(github_token="test_token")
 
         with pytest.raises(ValueError) as exc_info:
-            client.get_open_issues()
+            client.get_issues()
 
         assert "rate limit" in str(exc_info.value).lower()
 
     @patch("requests.get")
-    def test_get_open_issues_404_error(self, mock_get):
+    def test_get_issues_404_error(self, mock_get):
         """Test handling of 404 errors (repo not found)."""
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -207,24 +207,24 @@ class TestGitHubIssueSearchClientFetch:
         client = GitHubIssueSearchClient(github_token="test_token")
 
         with pytest.raises(ValueError) as exc_info:
-            client.get_open_issues()
+            client.get_issues()
 
         assert "not found" in str(exc_info.value).lower()
 
     @patch("requests.get")
-    def test_get_open_issues_timeout(self, mock_get):
+    def test_get_issues_timeout(self, mock_get):
         """Test handling of timeout errors."""
         mock_get.side_effect = requests.Timeout()
 
         client = GitHubIssueSearchClient(github_token="test_token")
 
         with pytest.raises(ValueError) as exc_info:
-            client.get_open_issues()
+            client.get_issues()
 
         assert "timed out" in str(exc_info.value).lower()
 
     @patch("requests.get")
-    def test_get_open_issues_pagination(self, mock_get):
+    def test_get_issues_pagination(self, mock_get):
         """Test pagination handling for multiple pages."""
         # First page with full results
         page1_response = MagicMock()
@@ -248,7 +248,7 @@ class TestGitHubIssueSearchClientFetch:
         mock_get.side_effect = [page1_response, page2_response]
 
         client = GitHubIssueSearchClient(github_token="test_token")
-        issues = client.get_open_issues(max_pages=3)
+        issues = client.get_issues(max_pages=3)
 
         assert len(issues) == 101
         assert mock_get.call_count == 2  # Stopped after partial page
